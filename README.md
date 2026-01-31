@@ -29,12 +29,8 @@ Version](https://img.shields.io/badge/R-%E2%89%A5%204.0.0-blue.svg)](https://www
 -   [Configuration](#configuration)
 -   [Module Overview](#module-overview)
 -   [Usage Examples](#usage-examples)
--   [Troubleshooting](#troubleshooting)
--   [Performance Tuning](#performance-tuning)
 -   [Output Structure](#output-structure)
 -   [Canonical Narrative Template](#canonical-narrative-template)
--   [Citation](#citation)
--   [Contributing](#contributing)
 -   [License](#license)
 
 ------------------------------------------------------------------------
@@ -80,7 +76,7 @@ records, 700+ species)
 
 | Module | Description | Data Source |
 |----|----|----|
-| **1. Ingest & Clean** | Load, validate, and standardize occurrence data | User Excel file |
+| **1. Ingest & Clean** | Load, validate, and standardize occurrence data | User .tsv file |
 | **1B. Vernacular Names** | Add common names in multiple languages | ITIS API or manual dictionary |
 | **1C. Distribution Metrics** | Calculate EOO/AOO (historical vs current) | Computed |
 | **1D. Fragmentation** | Detect spatial fragmentation patterns | Computed |
@@ -94,7 +90,7 @@ records, 700+ species)
 | **3. Reports (Indigenous)** | Build species-level JSON reports for native populations | Compiled |
 | **4. Reports (Non-Indigenous)** | Build species-level JSON reports for introduced populations | Compiled |
 | **5. Merge Scenario 3** | Merge reports for species with both population types | Compiled |
-| **6. Narratives** | Generate ecological summaries | Compiled |
+| **6. Narratives** | Generate summaries | Compiled |
 | **7. Citations** | Extract and format bibliographies | User data |
 | **8. Maps** | Generate EOO/AOO/basin maps (GeoJSON, KML) with type locality markers | Computed |
 | **9. Package Export** | Package data for publication | Compiled |
@@ -109,12 +105,12 @@ records, 700+ species)
 -   **OS:** Windows 10/11, macOS 10.15+, or Linux
 -   **RAM:** 8 GB
 -   **Storage:** 10 GB free space
--   **R Version:** ≥ 4.0.0
+-   **R Version:** ≥ 4.2.0
 
 ### Recommended (Full 100k database)
 
 -   **OS:** Linux (Ubuntu 20.04+ or CentOS 7+)
--   **RAM:** 32 GB+
+-   **RAM:** 128 GB+
 -   **Storage:** 50 GB free space
 -   **CPU:** 8+ cores
 -   **R Version:** ≥ 4.2.0
@@ -180,7 +176,7 @@ cd ../feow
 
 ``` bash
 # Place your Excel database in project root
-cp /path/to/your/database.xlsx ./database-WoC_mock2.xlsx
+cp /path/to/your/database.tsv ./RollData.tsv
 ```
 
 ------------------------------------------------------------------------
@@ -233,7 +229,7 @@ Edit `config.R` to customize the analysis:
 ``` r
 CONFIG <- list(
   # Input/Output
-  input_file = "database-WoC_mock2.xlsx",
+  input_file = "RollData.tsv",
   root_output_dir = "checkover_output",
   version = "my_analysis_v1",  # Change to force new run
   
@@ -266,7 +262,7 @@ CONFIG$memory <- list(
 ``` r
 CONFIG$parallel <- list(
   workers = "auto",           # or set to specific number: 4
-  force_sequential = FALSE    # Set TRUE to disable parallel
+  force_sequential = TRUE    # Set FALSE to enable parallel
 )
 ```
 
@@ -302,15 +298,15 @@ source("R/01_ingest.R")
 
 init_logger()
 result <- ingest_clean(
-  file_path = "database-WoC_mock2.xlsx",
+  file_path = "RollData.tsv",
   output_dir = "test_output",
   resolve_taxonomy = TRUE
 )
 ```
 
-**Outputs:** - `clean_occurrences.csv` - Standardized occurrence data -
-`taxonomy_mapping_full.csv` - WoRMS taxonomic hierarchy -
-`type_localities.csv` - Type locality records
+**Outputs:** - `clean_occurrences.tsv` - Standardized occurrence data -
+`taxonomy_mapping_full.tsv` - WoRMS taxonomic hierarchy -
+`type_localities.tsv` - Type locality records
 
 ### Module 2F: HydroBASINS (Memory-Optimized)
 
@@ -360,7 +356,7 @@ maps <- generate_all_maps_seq(
 **Function:** `generate_canonical_narratives()`
 
 ``` r
-# Generate File_S1 compliant narratives
+# Generate narratives
 canonical_narratives <- generate_canonical_narratives(
   scenario_table = scenario_table,
   result_indigenous = result_indigenous,
@@ -389,8 +385,8 @@ canonical_narratives <- generate_canonical_narratives(
 ``` r
 # 1. Edit config.R
 CONFIG$version <- "test_run_v1"
-CONFIG$input_file <- "database-WoC_mock2.xlsx"  # 1k records
-CONFIG$memory$batch_size <- 20
+CONFIG$input_file <- "RollData.tsv"  # 1k records
+CONFIG$memory$batch_size <- 10
 
 # 2. Run
 source("checkcover_main.R")
@@ -411,7 +407,7 @@ cd /path/to/checkover
 # 3. Edit config for production
 nano config.R
 # Set: version = "production_full_v1"
-#      input_file = "database-WoC_FULL.xlsx"
+#      input_file = "database.tsv"
 #      batch_size = 100
 
 # 4. Run in background
@@ -453,153 +449,6 @@ source("R/01d_fragmentation.R")
 result <- analyze_fragmentation(result, output_dir = "test_output")
 ```
 
-------------------------------------------------------------------------
-
-## 🐛 Troubleshooting {#troubleshooting}
-
-### Common Issues
-
-#### 1. Memory Errors
-
-**Symptom:** `Error: cannot allocate vector of size...`
-
-**Solution:**
-
-``` r
-# Edit config.R
-CONFIG$memory$batch_size <- 10  # Reduce from 50
-CONFIG$parallel$force_sequential <- TRUE  # Disable parallel
-```
-
-#### 2. GADM Download Fails
-
-**Symptom:** `Failed to fetch GADM level 1 for 'XXX'`
-
-**Solution:**
-
-``` r
-# Pre-download GADM files
-library(geodata)
-gadm("USA", level = 1, path = "checkover_output/cache")
-gadm("CAN", level = 1, path = "checkover_output/cache")
-# Repeat for all countries in your dataset
-```
-
-#### 3. HydroBASINS Cache Corruption
-
-**Symptom:** `CORRUPTED CACHE DETECTED! L10 has only 1234 features`
-
-**Solution:**
-
-``` r
-# Delete corrupted cache
-unlink("checkover_output/cache/hydro_lev10_merged.rds")
-
-# Re-run (will regenerate)
-source("checkcover_main.R")
-```
-
-#### 4. WoRMS API Timeouts
-
-**Symptom:** `Error resolving 'Species name': Timeout`
-
-**Solution:**
-
-``` r
-# Disable taxonomy resolution for testing
-CONFIG$taxonomy$resolve <- FALSE
-
-# Or increase timeout (in module file)
-options(timeout = 300)  # 5 minutes
-```
-
-#### 5. Parallel Processing Hangs
-
-**Symptom:** Script freezes during parallel operations
-
-**Solution:**
-
-``` r
-# Switch to sequential mode
-CONFIG$parallel$force_sequential <- TRUE
-CONFIG$reporting$parallel_maps <- FALSE
-```
-
-#### 6. Scenario 3 Species Errors (match.names)
-
-**Symptom:** `Error in match.names(clabs, names(xi)): names do not match previous names`
-
-**Cause:** Species with both indigenous and non-indigenous populations have data frames with different column structures.
-
-**Solution:** The framework uses `dplyr::bind_rows()` instead of `rbind()` to handle column mismatches gracefully. Ensure you have the latest version of:
-- `08_maps.R` (lines 68-69)
-- `10_canonical_narratives.R` (lines 649 and ~720)
-
-------------------------------------------------------------------------
-
-## ⚡ Performance Tuning {#performance-tuning}
-
-### For Low-Memory Systems (8GB RAM)
-
-``` r
-CONFIG$memory <- list(
-  max_worker_memory = 500,   # Reduce from 1500
-  batch_size = 10,           # Reduce from 50
-  aggressive_gc = TRUE
-)
-
-CONFIG$parallel <- list(
-  workers = 1,               # Single-threaded
-  force_sequential = TRUE
-)
-```
-
-### For High-Memory Servers (64GB+ RAM)
-
-``` r
-CONFIG$memory <- list(
-  max_worker_memory = 4000,
-  batch_size = 200,          # Process more species at once
-  aggressive_gc = FALSE      # Less overhead
-)
-
-CONFIG$parallel <- list(
-  workers = 16,              # Use more cores
-  force_sequential = FALSE
-)
-
-CONFIG$reporting$parallel_maps <- TRUE  # Parallel map generation
-```
-
-### Speed Optimization Tips
-
-1.  **Skip taxonomy resolution** (saves \~30 min for 700 species):
-
-``` r
-   CONFIG$taxonomy$resolve <- FALSE
-```
-
-2.  **Use cached spatial layers** (saves \~1 hour):
-
-``` r
-   # Keep checkover_output/cache/ between runs
-```
-
-3.  **Generate only essential maps**:
-
-``` r
-   CONFIG$reporting$formats <- c("geojson")  # Skip KML
-```
-
-4.  **Disable WDPA for testing** (saves \~2 hours):
-
-``` r
-   # Comment out in checkcover_main.R:
-   # result <- enrich_with_wdpa(...)
-```
-
-------------------------------------------------------------------------
-
 ## 📂 Output Structure {#output-structure}
 
 ```         
@@ -616,9 +465,9 @@ checkover_output/
     └── run_<version>/
         ├── _SUCCESS                       # Completion marker
         ├── clean_occurrences_with_metrics.csv
-        ├── fragmentation_analysis.csv
-        ├── taxonomy_mapping_full.csv
-        ├── vernacular_names_lookup.csv
+        ├── fragmentation_analysis.tsv
+        ├── taxonomy_mapping_full.tsv
+        ├── vernacular_names_lookup.tsv
         ├── maps/
         │   ├── EOO/
         │   │   ├── Species_name_EOO.geojson
@@ -637,11 +486,11 @@ checkover_output/
         │   ├── merged_scenario3/
         │   │   └── Species_name_merged.json
         │   ├── dataset_summary_statistics.json
-        │   └── species_detailed_reports.csv
+        │   └── species_detailed_reports.tsv
         ├── narratives/
         │   ├── Species_name_narrative.txt
         │   └── Species_name_eco_narrative.json
-        ├── narratives_canonical/              # File_S1 compliant
+        ├── narratives_canonical/              
         │   └── Species_name_canonical.md
         ├── narratives_formal/                 # Section 5 extracts
         │   ├── Species_name_narrative.txt
@@ -654,9 +503,9 @@ checkover_output/
             ├── packaging_summary.json
             └── Species_name/
                 ├── package_metadata.json
-                ├── file_manifest.csv
+                ├── file_manifest.tsv
                 ├── data/
-                │   └── Species_name_occurrences.csv  # Privacy-filtered
+                │   └── Species_name_occurrences.tsv  # Privacy-filtered
                 ├── maps/
                 ├── narratives/
                 └── citations/
@@ -666,12 +515,12 @@ checkover_output/
 
 ## 📄 Canonical Narrative Template {#canonical-narrative-template}
 
-The canonical narratives (Module 10) follow the **File_S1 template specification v0.9** with five sections:
+The canonical narratives (Module 10) with five sections:
 
 ### Section 1: Taxonomic Identity
 - Scientific name (italicized)
 - **Higher taxonomy:** Order > Infraorder > Superfamily > Family
-- Common names (multilingual, full language names: "English: noble crayfish", not "eng: noble crayfish")
+- Common names 
 - Type locality (if available): geographic unit, protected area, bibliographic reference
 
 ### Section 2: Indigenous Range Overview
@@ -679,7 +528,7 @@ The canonical narratives (Module 10) follow the **File_S1 template specification
 - **EOO/AOO metrics** with km² units
 - **Countries** (sorted by record count)
 - **Subnational administrative units** (GADM Level 1)
-- **Hydrographic basins** with names (e.g., "Danube | Rhine | Elbe", not just count)
+- **Hydrographic basins** with names 
 - **Protected area coverage** (count and percentage)
 - **Biogeographic context:** TEOW and FEOW ecoregions
 - **Temporal context:** year range, post-2000 percentage
@@ -698,7 +547,7 @@ The canonical narratives (Module 10) follow the **File_S1 template specification
 - **Data quality score:** 0–100 composite indicator (spatial accuracy 40%, temporal precision 25%, source reliability 25%, recency 10%)
 - **High-accuracy records** percentage
 - **Bibliographic coverage:** total references, DOI-linked references (not records)
-- **Raw data provenance:** World of Crayfish® citation
+- **Raw data provenance:** 
 - **Processing framework provenance:** cheCkOVER version, data snapshot date, processing date
 - **Interpretation note:** disclaimer about non-IUCN status
 
@@ -710,36 +559,6 @@ Human-readable prose in 5 paragraphs:
 4. Non-indigenous populations (if applicable)
 5. Data provenance with quality metrics and disclaimer
 
-------------------------------------------------------------------------
-
-## 📊 Expected Runtime
-
-| Dataset Size        | System             | Configuration           | Runtime   |
-|---------------------|--------------------|-------------------------|-----------|
-| 1k records (mock)   | 8GB RAM, 4 cores   | Sequential, no taxonomy | \~10 min  |
-| 1k records (mock)   | 8GB RAM, 4 cores   | Full pipeline           | \~30 min  |
-| 100k records (full) | 32GB RAM, 8 cores  | Batch=50, sequential    | \~6 hours |
-| 100k records (full) | 64GB RAM, 16 cores | Batch=100, parallel     | \~3 hours |
-
-**Bottlenecks:** - Taxonomy resolution: \~5-10 sec per species (WoRMS
-API) - WDPA enrichment: \~2-5 min per country (download + processing) -
-HydroBASINS: \~10-30 min (first run, then cached)
-
-------------------------------------------------------------------------
-
-## 📖 Citation {#citation}
-
-If you use cheCkOVER in your research, please cite:
-
-``` bibtex
-@software{checkover2025,
-  title = {cheCkOVER: Unlocking biodiversity occurrence for artificial intelligence},
-  author = {Your Name},
-  year = {2025},
-  url = {https://github.com/yourusername/checkover},
-  version = {1.0.0}
-}
-```
 
 ### Data Sources to Cite
 
@@ -760,27 +579,6 @@ If you use cheCkOVER in your research, please cite:
 
 ------------------------------------------------------------------------
 
-## 🤝 Contributing {#contributing}
-
-Contributions are welcome! To contribute:
-
-1.  **Fork** the repository
-2.  **Create** a feature branch: `git checkout -b feature/your-feature`
-3.  **Commit** changes: `git commit -m 'Add amazing feature'`
-4.  **Push** to branch: `git push origin feature/your-feature`
-5.  **Open** a Pull Request
-
-### Development Guidelines
-
--   Follow existing code style (use tidyverse conventions)
--   Add logging to new functions (`log_info()`, `log_debug()`)
--   Include progress bars for long operations
--   Write defensive code (check for NULL, handle errors)
--   Use `dplyr::bind_rows()` instead of `rbind()` when combining data frames from different sources
--   Update documentation and README
-
-------------------------------------------------------------------------
-
 ## 📄 License {#license}
 
 This project is licensed under **Creative Commons Attribution 4.0
@@ -796,51 +594,7 @@ See [LICENSE](LICENSE) file for details.
 
 ------------------------------------------------------------------------
 
-## 🙏 Acknowledgments
-
--   **World of Crayfish** database contributors
--   Natural Earth, GADM, WWF, IUCN for spatial data
--   R Core Team and package maintainers
--   [Your institution/funding sources]
-
-------------------------------------------------------------------------
-
-## 📧 Contact
-
-**Author:** [Your Name]\
-**Email:**
-[your.email\@institution.edu](mailto:your.email@institution.edu){.email}\
-**GitHub:** [\@yourusername](https://github.com/yourusername)\
-**Issues:** <https://github.com/yourusername/checkover/issues>
-
-------------------------------------------------------------------------
-
 ## 🔄 Version History
-
-### v1.0.0 (2025-01-28)
-
--   ✅ Initial release
--   ✅ Full modular pipeline (Modules 1-10)
--   ✅ Memory-optimized HydroBASINS processing
--   ✅ Resume capability
--   ✅ Progress bars and comprehensive logging
--   ✅ Species package export
--   ✅ Scenario-aware processing (indigenous / non-indigenous / both)
--   ✅ Canonical narrative generation (File_S1 template compliant)
--   ✅ Type locality markers on basin maps
--   ✅ Robust data binding for Scenario 3 species (`dplyr::bind_rows()`)
-
-### v1.0.1 (2025-01-28) - Canonical Narrative Enhancements
-
--   ✅ **Higher taxonomy** in Section 1 (Order > Infraorder > Superfamily > Family)
--   ✅ **Full language names** for vernacular names (English, Romanian, not eng, ron)
--   ✅ **Hydrographic basin names** displayed (not just counts)
--   ✅ **Data quality score** (0-100 composite indicator)
--   ✅ **Total references vs DOI-linked references** distinction
--   ✅ **cheCkOVER version and data snapshot date** in provenance
--   ✅ **Extended Section 5 narratives** (300+ words with geographic detail)
--   ✅ **Fixed Scenario 3 rbind errors** using `dplyr::bind_rows()`
-
 ### Planned Features (v1.1.0)
 
 -   [ ] Web interface for interactive exploration
@@ -851,5 +605,6 @@ See [LICENSE](LICENSE) file for details.
 
 ------------------------------------------------------------------------
 
-**Last Updated:** 2025-01-28\
+**Last Updated:** 2026-01-31\
 **Documentation Version:** 1.0.1
+
