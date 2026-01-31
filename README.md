@@ -32,6 +32,7 @@ Version](https://img.shields.io/badge/R-%E2%89%A5%204.0.0-blue.svg)](https://www
 -   [Troubleshooting](#troubleshooting)
 -   [Performance Tuning](#performance-tuning)
 -   [Output Structure](#output-structure)
+-   [Canonical Narrative Template](#canonical-narrative-template)
 -   [Citation](#citation)
 -   [Contributing](#contributing)
 -   [License](#license)
@@ -48,7 +49,7 @@ occurrence records into AI-ready datasets with:
     areas, hydrographic basins)
 -   **Taxonomic validation** (via WoRMS)
 -   **Distribution metrics** (EOO, AOO, fragmentation analysis)
--   **Conservation narratives** (automated ecological summaries)
+-   **Conservation narratives** (automated ecological summaries following File_S1 template)
 -   **Citation management** (BibTeX, JSON, CITATION.cff)
 -   **Exportable species packages** (privacy-filtered,
     publication-ready)
@@ -73,6 +74,7 @@ records, 700+ species)
 -   ✅ **Comprehensive logging** - Debug-friendly, timestamped logs
 -   ✅ **Progress tracking** - Visual progress bars for long operations
 -   ✅ **Cached computations** - Reuses spatial layers and API results
+-   ✅ **Scenario-aware processing** - Handles indigenous, non-indigenous, and mixed populations
 
 ### Enrichment Modules
 
@@ -82,17 +84,21 @@ records, 700+ species)
 | **1B. Vernacular Names** | Add common names in multiple languages | ITIS API or manual dictionary |
 | **1C. Distribution Metrics** | Calculate EOO/AOO (historical vs current) | Computed |
 | **1D. Fragmentation** | Detect spatial fragmentation patterns | Computed |
+| **1D. Scenario Detection** | Classify species by population type (indigenous/non-indigenous/both) | Computed |
 | **2A. Continents** | Tag records by continent | Natural Earth |
 | **2B. GADM** | Add country and admin-1 boundaries | GADM v4.1 |
 | **2C. TEOW** | Link to terrestrial ecoregions | WWF TEOW |
 | **2D. FEOW** | Link to freshwater ecoregions | WWF FEOW |
 | **2E. WDPA** | Identify protected area overlap | WDPA |
 | **2F. HydroBASINS** | Assign hydrographic basins | HydroSHEDS |
-| **3. Maps** | Generate EOO/AOO/basin maps (GeoJSON, KML) | Computed |
-| **4. Reports** | Build species-level JSON reports | Compiled |
-| **5. Narratives** | Generate ecological summaries | Compiled |
-| **6. Citations** | Extract and format bibliographies | User data |
-| **7. Export** | Package data for publication | Compiled |
+| **3. Reports (Indigenous)** | Build species-level JSON reports for native populations | Compiled |
+| **4. Reports (Non-Indigenous)** | Build species-level JSON reports for introduced populations | Compiled |
+| **5. Merge Scenario 3** | Merge reports for species with both population types | Compiled |
+| **6. Narratives** | Generate ecological summaries | Compiled |
+| **7. Citations** | Extract and format bibliographies | User data |
+| **8. Maps** | Generate EOO/AOO/basin maps (GeoJSON, KML) with type locality markers | Computed |
+| **9. Package Export** | Package data for publication | Compiled |
+| **10. Canonical Narratives** | Generate File_S1 compliant geo-narratives | Compiled |
 
 ------------------------------------------------------------------------
 
@@ -209,6 +215,8 @@ checkover_output/
 │       ├── maps/
 │       ├── reports/
 │       ├── narratives/
+│       ├── narratives_canonical/
+│       ├── narratives_formal/
 │       └── species_packages/
 └── logs/
     └── checkover_<timestamp>.log
@@ -321,20 +329,56 @@ result <- enrich_with_hydrobasins_merged(
 )
 ```
 
-### Module 3: Map Generation
+### Module 8: Map Generation (Scenario-Aware)
 
-**File:** `R/03_maps.R`\
-**Function:** `generate_maps()`
+**File:** `R/08_maps.R`\
+**Function:** `generate_all_maps_seq()`
 
 ``` r
-# Generate only GeoJSON (faster)
-maps <- generate_maps(
-  result,
+# Generate maps for all scenarios
+maps <- generate_all_maps_seq(
+  scenario_table = scenario_table,
+  result_indigenous = result_indigenous,
+  result_non_indigenous = result_non_indigenous,
   output_dir = "checkover_output",
-  formats = c("geojson"),  # Exclude "kml" for speed
-  parallel = FALSE         # Set TRUE on server
+  cache_dir = "checkover_output/cache",
+  formats = c("geojson", "kml")
 )
 ```
+
+**Features:**
+- Scenario 1: Indigenous populations only (orange basins)
+- Scenario 2: Non-indigenous populations only (purple basins)
+- Scenario 3: Both population types (mixed coloring per basin)
+- Type locality markers (red 2km×2km squares)
+- EOO convex hulls (yellow)
+- AOO grid cells (yellow)
+
+### Module 10: Canonical Narrative Generation
+
+**File:** `R/10_canonical_narratives.R`\
+**Function:** `generate_canonical_narratives()`
+
+``` r
+# Generate File_S1 compliant narratives
+canonical_narratives <- generate_canonical_narratives(
+  scenario_table = scenario_table,
+  result_indigenous = result_indigenous,
+  result_non_indigenous = result_non_indigenous,
+  indigenous_reports = indigenous_reports,
+  non_indigenous_reports = non_indigenous_reports,
+  scenario3_merged = scenario3_merged,
+  vernacular_lookup = VERNACULAR_LOOKUP,
+  output_dir = run_env$run_dir,
+  feow_lookup_path = CONFIG$dictionaries$feow,
+  hydrobasin_names = HYDROBASIN_NAMES
+)
+```
+
+**Outputs per species:**
+- `{species}_canonical.md` - Full canonical narrative (all 5 sections)
+- `{species}_narrative.txt` - Formal narrative text (Section 5 only)
+- `{species}_narrative.json` - Structured formal narrative with metadata
 
 ------------------------------------------------------------------------
 
@@ -481,6 +525,16 @@ CONFIG$parallel$force_sequential <- TRUE
 CONFIG$reporting$parallel_maps <- FALSE
 ```
 
+#### 6. Scenario 3 Species Errors (match.names)
+
+**Symptom:** `Error in match.names(clabs, names(xi)): names do not match previous names`
+
+**Cause:** Species with both indigenous and non-indigenous populations have data frames with different column structures.
+
+**Solution:** The framework uses `dplyr::bind_rows()` instead of `rbind()` to handle column mismatches gracefully. Ensure you have the latest version of:
+- `08_maps.R` (lines 68-69)
+- `10_canonical_narratives.R` (lines 649 and ~720)
+
 ------------------------------------------------------------------------
 
 ## ⚡ Performance Tuning {#performance-tuning}
@@ -570,15 +624,28 @@ checkover_output/
         │   │   ├── Species_name_EOO.geojson
         │   │   └── Species_name_EOO.kml
         │   ├── AOO/
-        │   └── Species_name_basins.geojson
+        │   │   ├── Species_name_AOO.geojson
+        │   │   └── Species_name_AOO.kml
+        │   └── basins/
+        │       ├── Species_name_basins.geojson  # Includes type locality
+        │       └── Species_name_basins.kml
         ├── reports/
+        │   ├── indigenous/
+        │   │   └── Species_name.json
+        │   ├── non_indigenous/
+        │   │   └── Species_name.json
+        │   ├── merged_scenario3/
+        │   │   └── Species_name_merged.json
         │   ├── dataset_summary_statistics.json
-        │   ├── species_detailed_reports.csv
-        │   └── species/
-        │       └── Species_name.json
+        │   └── species_detailed_reports.csv
         ├── narratives/
         │   ├── Species_name_narrative.txt
         │   └── Species_name_eco_narrative.json
+        ├── narratives_canonical/              # File_S1 compliant
+        │   └── Species_name_canonical.md
+        ├── narratives_formal/                 # Section 5 extracts
+        │   ├── Species_name_narrative.txt
+        │   └── Species_name_narrative.json
         ├── citations/
         │   ├── Species_name_bibliography.json
         │   ├── Species_name_bibliography.bib
@@ -594,6 +661,54 @@ checkover_output/
                 ├── narratives/
                 └── citations/
 ```
+
+------------------------------------------------------------------------
+
+## 📄 Canonical Narrative Template {#canonical-narrative-template}
+
+The canonical narratives (Module 10) follow the **File_S1 template specification v0.9** with five sections:
+
+### Section 1: Taxonomic Identity
+- Scientific name (italicized)
+- **Higher taxonomy:** Order > Infraorder > Superfamily > Family
+- Common names (multilingual, full language names: "English: noble crayfish", not "eng: noble crayfish")
+- Type locality (if available): geographic unit, protected area, bibliographic reference
+
+### Section 2: Indigenous Range Overview
+- **Distribution category:** endemic / regional / cosmopolitan
+- **EOO/AOO metrics** with km² units
+- **Countries** (sorted by record count)
+- **Subnational administrative units** (GADM Level 1)
+- **Hydrographic basins** with names (e.g., "Danube | Rhine | Elbe", not just count)
+- **Protected area coverage** (count and percentage)
+- **Biogeographic context:** TEOW and FEOW ecoregions
+- **Temporal context:** year range, post-2000 percentage
+- **Auto-generated contextual statements** (endemic restrictions, protection gaps, data recency)
+- **Range dynamics** (if extinction records present): historical vs current EOO/AOO
+- **Fragmentation assessment** (endemic/regional species only)
+
+### Section 3: Non-Indigenous Range Overview
+- Status and category (local / widespread)
+- EOO/AOO metrics (informative, not for IUCN)
+- Countries, basins, temporal coverage
+- First record year
+
+### Section 4: Data Quality, Traceability, and Provenance
+- **Data summary:** total records, indigenous/non-indigenous breakdown
+- **Data quality score:** 0–100 composite indicator (spatial accuracy 40%, temporal precision 25%, source reliability 25%, recency 10%)
+- **High-accuracy records** percentage
+- **Bibliographic coverage:** total references, DOI-linked references (not records)
+- **Raw data provenance:** World of Crayfish® citation
+- **Processing framework provenance:** cheCkOVER version, data snapshot date, processing date
+- **Interpretation note:** disclaimer about non-IUCN status
+
+### Section 5: Formal Narrative Summary (300–500 words)
+Human-readable prose in 5 paragraphs:
+1. Taxonomic identity with higher taxonomy and distribution category
+2. Indigenous range with countries, basins (named), ecoregions, temporal coverage
+3. Conservation context with protection percentage, fragmentation, extinction records
+4. Non-indigenous populations (if applicable)
+5. Data provenance with quality metrics and disclaimer
 
 ------------------------------------------------------------------------
 
@@ -661,6 +776,7 @@ Contributions are welcome! To contribute:
 -   Add logging to new functions (`log_info()`, `log_debug()`)
 -   Include progress bars for long operations
 -   Write defensive code (check for NULL, handle errors)
+-   Use `dplyr::bind_rows()` instead of `rbind()` when combining data frames from different sources
 -   Update documentation and README
 
 ------------------------------------------------------------------------
@@ -701,14 +817,29 @@ See [LICENSE](LICENSE) file for details.
 
 ## 🔄 Version History
 
-### v1.0.0 (2025-01-XX)
+### v1.0.0 (2025-01-28)
 
 -   ✅ Initial release
--   ✅ Full modular pipeline (Modules 1-7)
+-   ✅ Full modular pipeline (Modules 1-10)
 -   ✅ Memory-optimized HydroBASINS processing
 -   ✅ Resume capability
 -   ✅ Progress bars and comprehensive logging
 -   ✅ Species package export
+-   ✅ Scenario-aware processing (indigenous / non-indigenous / both)
+-   ✅ Canonical narrative generation (File_S1 template compliant)
+-   ✅ Type locality markers on basin maps
+-   ✅ Robust data binding for Scenario 3 species (`dplyr::bind_rows()`)
+
+### v1.0.1 (2025-01-28) - Canonical Narrative Enhancements
+
+-   ✅ **Higher taxonomy** in Section 1 (Order > Infraorder > Superfamily > Family)
+-   ✅ **Full language names** for vernacular names (English, Romanian, not eng, ron)
+-   ✅ **Hydrographic basin names** displayed (not just counts)
+-   ✅ **Data quality score** (0-100 composite indicator)
+-   ✅ **Total references vs DOI-linked references** distinction
+-   ✅ **cheCkOVER version and data snapshot date** in provenance
+-   ✅ **Extended Section 5 narratives** (300+ words with geographic detail)
+-   ✅ **Fixed Scenario 3 rbind errors** using `dplyr::bind_rows()`
 
 ### Planned Features (v1.1.0)
 
@@ -720,5 +851,5 @@ See [LICENSE](LICENSE) file for details.
 
 ------------------------------------------------------------------------
 
-**Last Updated:** 2025-01-XX\
-**Documentation Version:** 1.0.0
+**Last Updated:** 2025-01-28\
+**Documentation Version:** 1.0.1
