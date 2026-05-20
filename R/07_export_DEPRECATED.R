@@ -101,7 +101,7 @@ package_export <- function(species_list, output_dir = "checkover_output",
     for (species_name in species_list) {
       pb$tick()
       
-      species_clean <- make_package_id(species_name)
+      species_clean <- gsub("[^A-Za-z0-9_]", "_", species_name)
       species_dir <- file.path(packages_dir, species_clean)
       if (!dir.exists(species_dir)) dir.create(species_dir, recursive = TRUE)
       

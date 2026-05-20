@@ -17,6 +17,16 @@ enrich_indigenous_spatial <- function(result_indigenous,
   with_log_section(module, {
     
     log_info("=== MODULE 3B: INDIGENOUS SPATIAL ENRICHMENT (remaining layers) ===", module = module)
+    
+    # Empty-data short-circuit. Must come BEFORE population_type validation —
+    # otherwise sparse-versioning runs that have no indigenous active species
+    # (e.g. only a non-indigenous-only species was reprocessed) trip the
+    # "wrong population type" check on a character(0) vector.
+    if (nrow(result_indigenous$clean_data) == 0) {
+      log_warn("No indigenous data to enrich.", module = module)
+      return(result_indigenous)
+    }
+    
     # CRITICAL VALIDATION: Ensure we have the right data
     if (!"population_type" %in% names(result_indigenous$clean_data)) {
       log_error("Missing population_type column in result_indigenous!", module = module)

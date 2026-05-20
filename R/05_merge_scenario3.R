@@ -54,7 +54,7 @@ merge_scenario3_reports <- function(scenario_table,
     for (sp in scenario3_species) {
       log_info("Merging reports for: %s", sp, module = module)
       
-      sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
+      sp_clean <- make_package_id(sp)
       
       # Load indigenous report
       ind_report_file <- file.path(output_dir, "reports", "indigenous", paste0(sp_clean, ".json"))

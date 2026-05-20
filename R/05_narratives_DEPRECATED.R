@@ -196,7 +196,7 @@ narrative_builder <- function(result, detailed_reports, vernacular_result = NULL
         sep = "\n"
       )
       
-      sp_clean <- make_package_id(sp)
+      sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
       
       txt_path <- file.path(narratives_dir, paste0(sp_clean, "_narrative.txt"))
       json_path <- file.path(narratives_dir, paste0(sp_clean, "_eco_narrative.json"))

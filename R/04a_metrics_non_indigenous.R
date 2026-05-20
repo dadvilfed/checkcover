@@ -21,6 +21,16 @@ calculate_non_indigenous_metrics <- function(result_non_indigenous, output_dir =
              length(unique(cd$species)),
              module = module)
     
+    # Filter to active records for metric computation.
+    cd_active <- if ("temporal_status" %in% names(cd)) {
+      n_excluded <- sum(cd$temporal_status != "active", na.rm = TRUE)
+      if (n_excluded > 0L) {
+        log_info("Excluding %d non-active records (extinct + suppressed) from metrics.",
+                 n_excluded, module = module)
+      }
+      cd[cd$temporal_status == "active", , drop = FALSE]
+    } else cd
+    
     # Helper: Calculate EOO
     .calc_eoo <- function(lon, lat) {
       coords <- unique(data.frame(lon, lat))
@@ -46,7 +56,7 @@ calculate_non_indigenous_metrics <- function(result_non_indigenous, output_dir =
     # Calculate metrics per species
     log_info("Calculating EOO and AOO...", module = module)
     
-    metrics <- cd %>%
+    metrics <- cd_active %>%
       group_by(species) %>%
       summarise(
         n_records = n(),

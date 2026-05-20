@@ -178,12 +178,26 @@ enrich_with_feow <- function(result, output_dir = "checkover_output",
         
         if (is.finite(xmin) && is.finite(xmax) && is.finite(ymin) && is.finite(ymax) &&
             xmin < xmax && ymin < ymax) {
-          bb <- sf::st_bbox(c(xmin = xmin, ymin = ymin, xmax = xmax, ymax = ymax),
-                            crs = sf::st_crs(result$clean_sf))
-          log_info("Cropping FEOW to bbox [%.3f, %.3f, %.3f, %.3f].",
-                   xmin, ymin, xmax, ymax, module = module)
-          feow_min <- tryCatch(suppressWarnings(sf::st_crop(feow_min, bb)),
-                               error = function(e) { log_warn("FEOW crop failed.", module = module); feow_min })
+          # Skip cropping when the bbox spans more than ~90° in either dimension.
+          # Global-scale crops in EPSG:4326 produce corrupt geometries near the
+          # antimeridian, which causes st_within to fail and st_nearest_feature
+          # to assign nonsensical FEOW polygons (e.g. Alaska/Siberia for European
+          # points). Better to skip the crop and accept the cost of scanning all
+          # polygons than to silently mis-categorize records.
+          width  <- xmax - xmin
+          height <- ymax - ymin
+          if (width > 90 || height > 90) {
+            log_info(
+              "Skipping FEOW crop: bbox is %.1f x %.1f deg (too wide; would risk antimeridian-corrupted geometries).",
+              width, height, module = module)
+          } else {
+            bb <- sf::st_bbox(c(xmin = xmin, ymin = ymin, xmax = xmax, ymax = ymax),
+                              crs = sf::st_crs(result$clean_sf))
+            log_info("Cropping FEOW to bbox [%.3f, %.3f, %.3f, %.3f].",
+                     xmin, ymin, xmax, ymax, module = module)
+            feow_min <- tryCatch(suppressWarnings(sf::st_crop(feow_min, bb)),
+                                 error = function(e) { log_warn("FEOW crop failed.", module = module); feow_min })
+          }
         }
       }
     }

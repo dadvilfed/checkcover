@@ -1,168 +1,306 @@
 #### MODULE 3C: INDIGENOUS REPORTS ####
 
 #' Generate detailed JSON reports for indigenous species
-#' @param result_indigenous Enriched indigenous result
-#' @param vernacular_lookup Vernacular names lookup
-#' @param output_dir Output directory
+#' @param result_indigenous   Enriched indigenous result (list with $clean_data,
+#'                            $fragmentation; clean_data must contain taxonomy
+#'                            columns joined by Module 1: order, superfamily, family)
+#' @param vernacular_lookup   Vernacular names lookup (list with $wide, or data frame)
+#' @param output_dir          Output directory
+#' @param feow_lookup_path    Path to FEOW TSV lookup (ID | Realm | Major Habitat Type | Ecoregion)
+#' @param hydrobasin_names    HydroBASINS name lookup data frame (Basin_level | HYBAS_ID |
+#'                            Basin_name | Subbasin_name), as loaded by load_hydrobasin_names()
 #' @return List of generated reports
 generate_indigenous_reports <- function(result_indigenous,
-                                        vernacular_lookup = NULL,
-                                        output_dir = "checkover_output") {
+                                        vernacular_lookup  = NULL,
+                                        output_dir         = "checkover_output",
+                                        feow_lookup_path   = NULL,
+                                        hydrobasin_names   = NULL) {
   module <- "MODULE3C_REPORTS_IND"
-
+  
   with_log_section(module, {
     log_info("=== MODULE 3C: INDIGENOUS REPORTS ===", module = module)
-
+    
     cd <- result_indigenous$clean_data
-
+    
     if (nrow(cd) == 0) {
       log_warn("No data for reports.", module = module)
       return(list())
     }
-
+    
     # Create reports directory
     reports_dir <- file.path(output_dir, "reports", "indigenous")
     if (!dir.exists(reports_dir)) dir.create(reports_dir, recursive = TRUE, showWarnings = FALSE)
-
+    
     species_list <- unique(cd$species)
     log_info("Generating reports for %d species...", length(species_list), module = module)
-
-    # Extract vernacular lookup
-    vern_map <- NULL
-    if (!is.null(vernacular_lookup)) {
-      if (is.list(vernacular_lookup) && "wide" %in% names(vernacular_lookup)) {
-        vern_map <- vernacular_lookup$wide
-      } else if (is.data.frame(vernacular_lookup)) {
-        vern_map <- vernacular_lookup
-      }
-    }
-
-    # Fragmentation data
-    frag_df <- result_indigenous$fragmentation %||% NULL
-
+    
+    # ---------- Shared lookups ----------
+    vern_map <- .extract_vern_map_3c(vernacular_lookup)
+    feow_map <- .load_feow_map_3c(feow_lookup_path, module)
+    frag_df  <- result_indigenous$fragmentation %||% NULL
+    
     reports_generated <- list()
-
-    # Per-species reports
+    
     for (sp in species_list) {
-      sp_data <- cd[cd$species == sp, ]
-      sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
-
-      # Extract vernacular
-      vern_str <- NA_character_
-      if (!is.null(vern_map) && "species" %in% names(vern_map)) {
-        idx <- match(sp, vern_map$species)
-        if (!is.na(idx) && "vernacular_string" %in% names(vern_map)) {
-          raw_v <- vern_map$vernacular_string[idx]
-          if (!is.na(raw_v) && nzchar(raw_v)) {
-            vern_str <- gsub("^[\"\u2018\u2019\u201C\u201D]+|[\"\u2018\u2019\u201C\u201D]+$", "", raw_v)
-          }
-        }
-      }
-
-      # Extract fragmentation
-      frag_block <- list(computed = FALSE, status = "not_computed")
-      if (!is.null(frag_df)) {
-        fr <- frag_df[frag_df$species == sp, ]
-        if (nrow(fr) > 0) {
-          frag_block <- list(
-            computed = as.logical(fr$computed),
-            scope = as.character(fr$scope),
-            status = as.character(fr$status),
-            n_clusters = if (!is.na(fr$n_clusters)) as.integer(fr$n_clusters) else NA,
-            cluster_sizes = if (!is.na(fr$cluster_sizes_n)) as.character(fr$cluster_sizes_n) else NA,
-            mean_threshold_km = if (!is.na(fr$mean_distance_km)) as.numeric(fr$mean_distance_km) else NA
-          )
-        }
-      }
-
-      # Build report
+      sp_data_all <- cd[cd$species == sp, ]
+      # Filter to active records for metrics; keep sp_data_all for extinction counts
+      sp_data <- if ("temporal_status" %in% names(sp_data_all)) {
+        sp_data_all[sp_data_all$temporal_status == "active", , drop = FALSE]
+      } else sp_data_all
+      sp_clean <- make_package_id(sp)
+      
+      # --- Vernacular ---
+      vern_str <- .get_vern_str_3c(sp, vern_map)
+      
+      # --- Higher taxonomy ---
+      # Reads columns joined from WoRMS resolution in Module 1 (01_ingest.R).
+      # Template format: "Order > Superfamily > Family"
+      tax_order      <- .first_val(sp_data$order)
+      tax_superfam   <- .first_val(sp_data$superfamily)
+      tax_family     <- .first_val(sp_data$family)
+      higher_taxonomy <- .build_higher_taxonomy(tax_order, tax_superfam, tax_family)
+      
+      # --- Resolve FEOW IDs -> names ---
+      feow_raw      <- sp_data$freshwater_ecoregion[!is.na(sp_data$freshwater_ecoregion)]
+      feow_resolved <- .resolve_feow_3c(feow_raw, feow_map)
+      feow_unique   <- sort(unique(feow_resolved[nzchar(feow_resolved)]))
+      
+      # --- Resolve hydrobasin codes -> names ---
+      basin_raw      <- sp_data$hydrobasin[!is.na(sp_data$hydrobasin)]
+      basin_resolved <- .resolve_basin_3c(basin_raw, hydrobasin_names)
+      basin_unique   <- sort(unique(basin_resolved[nzchar(basin_resolved)]))
+      
+      # --- Fragmentation block ---
+      frag_block <- .build_frag_block_3c(sp, frag_df)
+      
+      # --- v3 metadata derivations: distinct PAs, extinction localities, type locality ---
+      # PAs derived from ACTIVE records (extinct/suppressed records' PA membership shouldn't count)
+      pa_split <- unlist(strsplit(
+        sp_data$protected_area[!is.na(sp_data$protected_area) & nzchar(sp_data$protected_area)],
+        "\\s*\\|\\s*"
+      ))
+      n_distinct_pas <- length(unique(pa_split[nzchar(pa_split)]))
+      
+      # Extinctions: use the FULL slice (sp_data_all), not the active-filtered one,
+      # because extinct records ARE the thing we're counting here.
+      ext_idx <- which(!is.na(sp_data_all$is_extinct) & sp_data_all$is_extinct == TRUE)
+      n_extinctions <- if (length(ext_idx) > 0L) {
+        length(unique(paste(sp_data_all$longitude[ext_idx], sp_data_all$latitude[ext_idx])))
+      } else 0L
+      
+      type_locality_present <- isTRUE(any(sp_data$is_type_locality, na.rm = TRUE))
+      
+      # --- Build report ---
       report <- list(
-        species = sp,
+        species         = sp,
         population_type = "indigenous",
         vernacular_names = vern_str,
-
+        
+        taxonomy = list(
+          order       = if (!is.na(tax_order))    tax_order    else NULL,
+          superfamily = if (!is.na(tax_superfam)) tax_superfam else NULL,
+          family      = if (!is.na(tax_family))   tax_family   else NULL,
+          higher_taxonomy = if (!is.na(higher_taxonomy)) higher_taxonomy else NULL
+        ),
+        
         metrics = list(
-          n_records = nrow(sp_data),
-          eoo_km2 = sp_data$eoo_km2[1],
-          aoo_km2 = sp_data$aoo_km2[1],
-          iucn_category = sp_data$iucn_category[1],
+          n_records        = nrow(sp_data),
+          eoo_km2          = sp_data$eoo_km2[1],
+          aoo_km2          = sp_data$aoo_km2[1],
+          iucn_category    = sp_data$iucn_category[1],
           hydrobasins_level = sp_data$hydrobasins_level[1]
         ),
-
+        
         temporal = list(
-          year_min = min(sp_data$year, na.rm = TRUE),
-          year_max = max(sp_data$year, na.rm = TRUE),
-          year_range = max(sp_data$year, na.rm = TRUE) - min(sp_data$year, na.rm = TRUE) + 1
+          year_min  = min(sp_data$year, na.rm = TRUE),
+          year_max  = max(sp_data$year, na.rm = TRUE),
+          year_range = max(sp_data$year, na.rm = TRUE) - min(sp_data$year, na.rm = TRUE) + 1,
+          pct_post_2000 = if (nrow(sp_data) > 0L) round(100 * sum(sp_data$year >= 2000, na.rm = TRUE) / nrow(sp_data), 1) else NA_real_
         ),
-
+        
         spatial_context = list(
-          continents = paste(sort(unique(sp_data$continents[!is.na(sp_data$continents)])), collapse = " | "),
-          countries = paste(sort(unique(sp_data$country[!is.na(sp_data$country)])), collapse = " | "),
-          admin_units = paste(sort(unique(sp_data$admin_1[!is.na(sp_data$admin_1)])), collapse = " | "),
+          continents      = paste(sort(unique(sp_data$continents[!is.na(sp_data$continents)])), collapse = " | "),
+          countries       = paste(sort(unique(sp_data$country[!is.na(sp_data$country)])),     collapse = " | "),
+          admin_units     = paste(sort(unique(sp_data$admin_1[!is.na(sp_data$admin_1)])),     collapse = " | "),
           ecoregions_teow = paste(sort(unique(sp_data$ecoregion[!is.na(sp_data$ecoregion)])), collapse = " | "),
-          ecoregions_feow = paste(sort(unique(sp_data$freshwater_ecoregion[!is.na(sp_data$freshwater_ecoregion)])), collapse = " | "),
+          ecoregions_feow = paste(feow_unique, collapse = " | "),
           protected_areas = paste(sort(unique(sp_data$protected_area[!is.na(sp_data$protected_area)])), collapse = " | "),
-          hydrobasins = paste(sort(unique(sp_data$hydrobasin[!is.na(sp_data$hydrobasin)])), collapse = " | ")
+          hydrobasins     = paste(basin_unique, collapse = " | ")
         ),
-
+        
         counts = list(
-          n_continents = length(unique(sp_data$continents[!is.na(sp_data$continents)])),
-          n_countries = length(unique(sp_data$country[!is.na(sp_data$country)])),
+          n_continents      = length(unique(sp_data$continents[!is.na(sp_data$continents)])),
+          n_countries       = length(unique(sp_data$country[!is.na(sp_data$country)])),
           n_ecoregions_teow = length(unique(sp_data$ecoregion[!is.na(sp_data$ecoregion)])),
-          n_ecoregions_feow = length(unique(sp_data$freshwater_ecoregion[!is.na(sp_data$freshwater_ecoregion)])),
-          n_hydrobasins = length(unique(sp_data$hydrobasin[!is.na(sp_data$hydrobasin)]))
+          n_ecoregions_feow = length(feow_unique),
+          n_hydrobasins     = length(basin_unique),
+          n_distinct_protected_areas = n_distinct_pas,
+          n_extinctions     = n_extinctions
         ),
-
+        
         conservation = list(
-          n_protected_records = sum(!is.na(sp_data$protected_area) & nzchar(sp_data$protected_area)),
-          protection_percentage = round((sum(!is.na(sp_data$protected_area) & nzchar(sp_data$protected_area)) / nrow(sp_data)) * 100, 1)
+          n_protected_records   = sum(!is.na(sp_data$protected_area) & nzchar(sp_data$protected_area)),
+          protection_percentage = round(
+            sum(!is.na(sp_data$protected_area) & nzchar(sp_data$protected_area)) / nrow(sp_data) * 100, 1)
         ),
-
-        fragmentation = frag_block
+        
+        fragmentation = frag_block,
+        type_locality_present = type_locality_present
       )
-
-      # Save JSON
+      
       json_file <- file.path(reports_dir, paste0(sp_clean, ".json"))
       jsonlite::write_json(report, json_file, pretty = TRUE, auto_unbox = TRUE, na = "null")
-
       reports_generated[[sp]] <- json_file
     }
-
+    
     log_info("Generated %d per-species reports.", length(reports_generated), module = module)
-
-    # Group summary report
+    
+    # Group summary report (unchanged)
     summary_report <- list(
       population_type = "indigenous",
-      total_species = length(species_list),
-      total_records = nrow(cd),
-
+      total_species   = length(species_list),
+      total_records   = nrow(cd),
+      
       categorization = list(
-        endemic = sum(cd$iucn_category == "endemic", na.rm = TRUE) / nrow(cd) * 100,
-        regional = sum(cd$iucn_category == "regional", na.rm = TRUE) / nrow(cd) * 100,
+        endemic      = sum(cd$iucn_category == "endemic",      na.rm = TRUE) / nrow(cd) * 100,
+        regional     = sum(cd$iucn_category == "regional",     na.rm = TRUE) / nrow(cd) * 100,
         cosmopolitan = sum(cd$iucn_category == "cosmopolitan", na.rm = TRUE) / nrow(cd) * 100
       ),
-
+      
       temporal = list(
         oldest_record = min(cd$year, na.rm = TRUE),
         newest_record = max(cd$year, na.rm = TRUE)
       ),
-
+      
       conservation = list(
         avg_protection_pct = round(mean(
-          tapply(!is.na(cd$protected_area) & nzchar(cd$protected_area), cd$species, mean, na.rm = TRUE) * 100
-        ), 1)
+          tapply(!is.na(cd$protected_area) & nzchar(cd$protected_area),
+                 cd$species, mean, na.rm = TRUE) * 100), 1)
       )
     )
-
+    
     summary_file <- file.path(reports_dir, "group_summary.json")
     jsonlite::write_json(summary_report, summary_file, pretty = TRUE, auto_unbox = TRUE)
-
     log_info("Saved group summary to: %s", summary_file, module = module)
     log_info("Indigenous reports complete.", module = module)
-
+    
     return(list(
-      per_species = reports_generated,
+      per_species   = reports_generated,
       group_summary = summary_file
     ))
   })
+}
+
+
+# ===========================================================================
+# MODULE-PRIVATE HELPERS
+# ===========================================================================
+
+.extract_vern_map_3c <- function(vernacular_lookup) {
+  if (is.null(vernacular_lookup)) return(NULL)
+  if (is.list(vernacular_lookup) && "wide" %in% names(vernacular_lookup))
+    return(vernacular_lookup$wide)
+  if (is.data.frame(vernacular_lookup)) return(vernacular_lookup)
+  NULL
+}
+
+.get_vern_str_3c <- function(sp, vern_map) {
+  if (is.null(vern_map) || !"species" %in% names(vern_map)) return(NA_character_)
+  idx <- match(sp, vern_map$species)
+  if (is.na(idx) || !"vernacular_string" %in% names(vern_map)) return(NA_character_)
+  raw_v <- vern_map$vernacular_string[idx]
+  if (is.na(raw_v) || !nzchar(raw_v)) return(NA_character_)
+  gsub("^[\"\u2018\u2019\u201C\u201D]+|[\"\u2018\u2019\u201C\u201D]+$", "", raw_v)
+}
+
+# Return first non-NA value from a vector (for per-species taxonomy columns)
+.first_val <- function(x) {
+  v <- x[!is.na(x) & nzchar(x)]
+  if (length(v) == 0) return(NA_character_)
+  v[1]
+}
+
+# Build "Order > Superfamily > Family" string; omit NA components
+.build_higher_taxonomy <- function(order, superfamily, family) {
+  parts <- c(order, superfamily, family)
+  parts <- parts[!is.na(parts) & nzchar(parts)]
+  if (length(parts) == 0) return(NA_character_)
+  paste(parts, collapse = " > ")
+}
+
+# Load FEOW lookup from a plain TSV file
+# Expected columns: ID, Realm, Major Habitat Type, Ecoregion
+.load_feow_map_3c <- function(feow_lookup_path, module) {
+  if (is.null(feow_lookup_path) || !file.exists(feow_lookup_path)) return(NULL)
+  feow_map <- tryCatch(
+    read.delim(feow_lookup_path, stringsAsFactors = FALSE,
+               encoding = "UTF-8", quote = ""),
+    error = function(e) {
+      log_warn("Failed to load FEOW lookup: %s", conditionMessage(e), module = module)
+      NULL
+    }
+  )
+  if (is.null(feow_map)) return(NULL)
+  names(feow_map) <- toupper(names(feow_map))
+  if ("ID" %in% names(feow_map)) feow_map$ID <- as.integer(feow_map$ID)
+  log_info("FEOW lookup loaded: %d rows", nrow(feow_map), module = module)
+  feow_map
+}
+
+# Resolve a vector of raw FEOW IDs to ecoregion names
+.resolve_feow_3c <- function(x, feow_map) {
+  if (is.null(feow_map) || length(x) == 0) return(x)
+  id_col   <- intersect(c("ID", "FEOW_ID"),                             names(feow_map))[1]
+  name_col <- intersect(c("ECOREGION", "NAME", "ECOREGION_NAME"),       names(feow_map))[1]
+  if (is.na(id_col) || is.na(name_col)) return(x)
+  ids       <- suppressWarnings(as.integer(x))
+  match_idx <- match(ids, feow_map[[id_col]])
+  resolved  <- feow_map[[name_col]][match_idx]
+  ok        <- !is.na(resolved) & nzchar(resolved)
+  x[ok]     <- resolved[ok]
+  x
+}
+
+# Resolve a vector of raw hydrobasin codes to basin names
+# Input format: "L10:2100522290"
+# Table columns: Basin_level | HYBAS_ID | Basin_name | Subbasin_name
+.resolve_basin_3c <- function(x, hb_lookup) {
+  if (is.null(hb_lookup) || length(x) == 0) return(x)
+  req <- c("Basin_level", "HYBAS_ID", "Basin_name", "Subbasin_name")
+  if (!all(req %in% names(hb_lookup))) return(x)
+  hb_lookup$lookup_key <- paste0(hb_lookup$Basin_level, ":", hb_lookup$HYBAS_ID)
+  
+  vapply(x, function(code) {
+    if (is.na(code) || !nzchar(code)) return(code)
+    idx <- match(code, hb_lookup$lookup_key)
+    if (is.na(idx)) {
+      id_only <- sub("^L\\d+:", "", code)
+      idx     <- match(id_only, as.character(hb_lookup$HYBAS_ID))
+    }
+    if (is.na(idx)) return(code)
+    basin    <- hb_lookup$Basin_name[idx]
+    subbasin <- hb_lookup$Subbasin_name[idx]
+    if (is.na(basin) || !nzchar(basin)) return(code)
+    if (is.na(subbasin) || !nzchar(subbasin) || basin == subbasin) basin
+    else paste0(basin, " - ", subbasin)
+  }, character(1), USE.NAMES = FALSE)
+}
+
+.build_frag_block_3c <- function(sp, frag_df) {
+  if (is.null(frag_df)) return(list(computed = FALSE, status = "not_computed"))
+  fr <- frag_df[frag_df$species == sp, ]
+  if (nrow(fr) == 0) return(list(computed = FALSE, status = "not_computed"))
+  list(
+    computed          = as.logical(fr$computed),
+    scope             = as.character(fr$scope),
+    status            = as.character(fr$status),
+    n_clusters        = if (!is.na(fr$n_clusters))     as.integer(fr$n_clusters)    else NA,
+    cluster_sizes     = if (!is.na(fr$cluster_sizes_n)) as.character(fr$cluster_sizes_n) else NA,
+    mean_threshold_km = if (!is.na(fr$mean_distance_km)) as.numeric(fr$mean_distance_km) else NA
+  )
+}
+
+# NULL coalescing (safe re-definition)
+if (!exists("%||%", mode = "function")) {
+  `%||%` <- function(a, b) if (!is.null(a)) a else b
 }

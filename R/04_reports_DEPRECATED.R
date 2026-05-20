@@ -385,7 +385,7 @@ build_reports <- function(result, vernacular_result = NULL, output_dir = "checko
       
       row <- detailed_reports[i, ]
       sp <- row$species
-      sp_clean <- make_package_id(sp)
+      sp_clean <- gsub("[^A-Za-z0-9_\\.]+", "_", sp)
       
       # Extract vernacular
       v_str <- NA_character_

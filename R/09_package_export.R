@@ -8,26 +8,151 @@
 #' @param vernacular_lookup Vernacular names lookup
 #' @param output_dir Output directory
 #' @return List of packaged species
-export_species_packages <- function(scenario_table,
+export_species_packages <- function(ctx,
+                                    scenario_table,
                                     all_maps,
                                     canonical_narratives,  # ✅ CHANGED
                                     all_citations,
                                     vernacular_lookup = NULL,
-                                    output_dir = "checkover_output") {
+                                    reports_dir = NULL) {
+  # ctx          : RunContext from Session 1 (carries version, paths, outcomes)
+  # reports_dir  : Where the per-species report JSONs from 03c/04c live.
+  #                Typically run_env$run_dir from checkcover_main.R.
+  
+  if (!inherits(ctx, "RunContext")) {
+    stop("export_species_packages: ctx must be a RunContext (got class '",
+         paste(class(ctx), collapse = "/"), "')")
+  }
+  validate_RunContext(ctx, expected_phase = "post_change_detection")
+  if (is.null(reports_dir)) {
+    stop("export_species_packages: reports_dir is required (path where 03c/04c wrote per-species report JSONs)")
+  }
+  
+  framework_version <- ctx$framework_version
   module <- "MODULE9_PACKAGING"
+  
   
   with_log_section(module, {
     log_info("=== MODULE 9: SPECIES PACKAGE EXPORT ===", module = module)
     
-    # Create packages directory
-    packages_dir <- file.path(output_dir, "species_packages")
+    # ── v3 metadata helpers (Phase 4B) ──────────────────────────────────────
+    # Read a per-species report JSON from disk; NULL if absent (e.g. scenario 1
+    # species has no non-indigenous report).
+    .read_species_report_v3 <- function(scope, sp_clean) {
+      f <- file.path(reports_dir, "reports", scope, paste0(sp_clean, ".json"))
+      if (!file.exists(f)) return(NULL)
+      tryCatch(jsonlite::read_json(f, simplifyVector = TRUE), error = function(e) NULL)
+    }
+    
+    # Build the per-population metrics block per Lucian's v3 spec. Returns the
+    # zero/null block when report is NULL (population type absent for species).
+    .build_pop_metrics_v3 <- function(report) {
+      if (is.null(report)) {
+        return(list(
+          AOO_km2 = 0L, EOO_km2 = 0L, records = 0L,
+          basins_count = 0L, countries_count = 0L, countries = list(),
+          protected_areas_count = 0L, fragmentation_clusters = 0L,
+          records_post_2000_pct = NA_real_,
+          records_in_protected_areas_pct = NA_real_,
+          extinctions_count = 0L,
+          trend_vs_previous = NA_character_
+        ))
+      }
+      # Parse pipe-separated countries string into a JSON array
+      cstr <- report$spatial_context$countries %||% ""
+      carr <- if (is.character(cstr) && nzchar(cstr)) {
+        parts <- unlist(strsplit(cstr, "\\s*\\|\\s*"))
+        as.list(parts[nzchar(parts)])
+      } else list()
+      
+      list(
+        AOO_km2 = if (!is.null(report$metrics$aoo_km2) && is.finite(report$metrics$aoo_km2))
+          as.integer(round(report$metrics$aoo_km2)) else 0L,
+        EOO_km2 = if (!is.null(report$metrics$eoo_km2) && is.finite(report$metrics$eoo_km2))
+          as.integer(round(report$metrics$eoo_km2)) else 0L,
+        records = report$metrics$n_records %||% 0L,
+        basins_count = report$counts$n_hydrobasins %||% 0L,
+        countries_count = report$counts$n_countries %||% 0L,
+        countries = carr,
+        protected_areas_count = report$counts$n_distinct_protected_areas %||% 0L,
+        fragmentation_clusters = report$fragmentation$n_clusters %||% 0L,
+        records_post_2000_pct = report$temporal$pct_post_2000 %||% NA_real_,
+        records_in_protected_areas_pct = report$conservation$protection_percentage %||% NA_real_,
+        extinctions_count = report$counts$n_extinctions %||% 0L,
+        trend_vs_previous = NA_character_  # null in JSON; v1.0 baseline has no comparison
+      )
+    }
+    
+    # Walk prior version manifests to find:
+    #   - is_baseline      : TRUE iff no prior version has an entry for this species
+    #   - previous_version : the source_version of the prior manifest entry
+    #   - prior_aoo_*      : AOO at source for trend computation
+    # Replaces the old temporal_delta lookup (Phase 5). Uses ctx + the version
+    # manifests written by sparse-versioning runs.
+    .read_prior_aux <- function(sp_clean) {
+      empty <- list(is_baseline = TRUE, previous_version = NULL,
+                    prior_aoo_indigenous = NULL, prior_aoo_non_indigenous = NULL)
+      
+      # Walk priors (numeric-desc) looking for an entry for this species
+      for (v in ctx$prior_versions) {
+        m <- read_version_manifest(ctx, v)
+        if (is.null(m) || is.null(m$species)) next
+        entry <- m$species[[sp_clean]]
+        if (is.null(entry)) next
+        
+        # Found. source_version is where artifacts live; read THAT version's
+        # package_metadata.json for prior AOO values.
+        source_v <- entry$source_version %||% v
+        prior_pkg_path <- file.path(ctx$root_output_dir, source_v, sp_clean,
+                                    "package_metadata.json")
+        prior_pkg <- if (file.exists(prior_pkg_path)) {
+          tryCatch(jsonlite::read_json(prior_pkg_path, simplifyVector = TRUE),
+                   error = function(e) NULL)
+        } else NULL
+        
+        return(list(
+          is_baseline              = FALSE,
+          previous_version         = as.character(source_v),
+          prior_aoo_indigenous     = prior_pkg$metrics$indigenous$AOO_km2     %||% NULL,
+          prior_aoo_non_indigenous = prior_pkg$metrics$non_indigenous$AOO_km2 %||% NULL
+        ))
+      }
+      
+      empty
+    }
+    
+    # spec: ±5% AOO change is the threshold.
+    # NA when either side is missing (population absent in current or prior).
+    .compute_trend_v3 <- function(curr_aoo, prev_aoo) {
+      if (is.null(curr_aoo) || is.null(prev_aoo)) return(NA_character_)
+      if (!is.finite(curr_aoo) || !is.finite(prev_aoo)) return(NA_character_)
+      if (prev_aoo == 0) {
+        if (curr_aoo == 0) return("stable")
+        return("increase")
+      }
+      pct <- (curr_aoo - prev_aoo) / prev_aoo * 100
+      if (pct >=  5) return("increase")
+      if (pct <= -5) return("decrease")
+      "stable"
+    }
+    # ────────────────────────────────────────────────────────────────────────
+    
+    # Per-species output now lives at <root>/<v>/<sp>/ (no run_dir/ middle layer).
+    # Lucian's WoC-drop-in invariant: <root>/<v>/<sp>/<maps,narratives,citations,...>
+    # Scaffolding (manifest, summary, INDEX) lives at <root>/<v>/checkover/.
+    packages_dir <- ctx$current_version_dir
     if (!dir.exists(packages_dir)) dir.create(packages_dir, recursive = TRUE, showWarnings = FALSE)
+    if (!dir.exists(ctx$current_scaffolding_dir)) {
+      dir.create(ctx$current_scaffolding_dir, recursive = TRUE, showWarnings = FALSE)
+    }
     
-    # Get all species
-    all_species <- unique(scenario_table$species)
-    all_species <- all_species[!is.na(all_species)]
-    
-    log_info("Packaging %d species...", length(all_species), module = module)
+    # Active species: only reprocessed + new actually get packaged at this version.
+    # Unchanged species are referenced by manifest, not duplicated on disk.
+    all_species <- intersect(unique(scenario_table$species[!is.na(scenario_table$species)]),
+                             ctx$active_species)
+    n_unchanged <- length(ctx$all_species) - length(ctx$active_species)
+    log_info("Sparse packaging: %d active species (skipping %d unchanged) at v%s",
+             length(all_species), n_unchanged, framework_version, module = module)
     
     # Extract vernacular lookup
     vern_map <- NULL
@@ -44,7 +169,7 @@ export_species_packages <- function(scenario_table,
     for (sp in all_species) {
       log_info("Packaging: %s", sp, module = module)
       
-      sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
+      sp_clean <- make_package_id(sp)
       scenario <- scenario_table$scenario[scenario_table$species == sp][1]
       
       # Create species directory
@@ -154,23 +279,74 @@ export_species_packages <- function(scenario_table,
         "Unknown scenario"
       )
       
+      # Read per-population reports from disk (one or both may be present per scenario)
+      ind_rep <- .read_species_report_v3("indigenous",     sp_clean)
+      non_rep <- .read_species_report_v3("non_indigenous", sp_clean)
+      
+      # Phase 5: prior-version manifest lookup (real is_baseline / previous_version / trend)
+      tax <- .read_prior_aux(sp_clean)
+      
+      # Build per-population metric blocks, then patch trends from the manifest data
+      ind_block <- .build_pop_metrics_v3(ind_rep)
+      non_block <- .build_pop_metrics_v3(non_rep)
+      ind_block$trend_vs_previous <- .compute_trend_v3(ind_block$AOO_km2, tax$prior_aoo_indigenous)
+      non_block$trend_vs_previous <- .compute_trend_v3(non_block$AOO_km2, tax$prior_aoo_non_indigenous)
+      
+      # Temporal coverage = union of years across both populations
+      year_mins <- c(ind_rep$temporal$year_min, non_rep$temporal$year_min)
+      year_mins <- year_mins[is.finite(year_mins)]
+      year_maxs <- c(ind_rep$temporal$year_max, non_rep$temporal$year_max)
+      year_maxs <- year_maxs[is.finite(year_maxs)]
+      first_year <- if (length(year_mins) > 0L) as.integer(min(year_mins)) else NA_integer_
+      last_year  <- if (length(year_maxs) > 0L) as.integer(max(year_maxs)) else NA_integer_
+      
+      # Type locality presence (sourced from indigenous report only — type
+      # localities are by definition native)
+      tlp <- if (!is.null(ind_rep) && !is.null(ind_rep$type_locality_present))
+        isTRUE(ind_rep$type_locality_present) else FALSE
+      
+      # Snapshot block — add previous_version only when this is not a baseline
+      snapshot_block <- list(
+        version     = framework_version,
+        date        = as.character(Sys.Date()),
+        is_baseline = tax$is_baseline
+      )
+      if (!is.null(tax$previous_version)) {
+        snapshot_block$previous_version <- tax$previous_version
+      }
+      
       package_metadata <- list(
         species = sp,
-        vernacular_names = vernacular_string,
         package_id = sp_clean,
+        vernacular_names = vernacular_string,
+        
+        snapshot = snapshot_block,
+        
         scenario = scenario,
         scenario_description = scenario_desc,
-        generated_date = as.character(Sys.Date()),
-        total_files = files_count,
+        
+        metrics = list(
+          indigenous     = ind_block,
+          non_indigenous = non_block,
+          type_locality_present = tlp,
+          temporal_coverage = list(
+            first_year = first_year,
+            last_year  = last_year
+          )
+        ),
+        
         provenance = list(
           source = "World of Crayfish",
           license = "CC-BY-4.0",
-          framework = "cheCkOVER"
+          framework = "cheCkOVER",
+          framework_version = framework_version,
+          generated_date = as.character(Sys.Date())
         ),
+        
         contents = list(
-          maps = sum(grepl("^map_", names(package_files))),
-          narratives = sum(grepl("^narrative_", names(package_files))),
-          citations = sum(grepl("^citation_", names(package_files)))
+          maps       = list.files(file.path(species_dir, "maps")),
+          narratives = list.files(file.path(species_dir, "narratives")),
+          citations  = list.files(file.path(species_dir, "citations"))
         )
       )
       
@@ -214,9 +390,9 @@ export_species_packages <- function(scenario_table,
         sprintf("**Scenario:** %s\n", scenario_desc),
         sprintf("**Generated:** %s\n\n", Sys.Date()),
         "## Package Contents\n\n",
-        sprintf("- **Maps:** %d files (EOO, AOO, HydroBASINS)\n", package_metadata$contents$maps),
-        sprintf("- **Narratives:** %d files (text, JSON)\n", package_metadata$contents$narratives),
-        sprintf("- **Citations:** %d files (JSON, BibTeX, CSV, CFF)\n", package_metadata$contents$citations),
+        sprintf("- **Maps:** %d files (EOO, AOO, HydroBASINS)\n", length(package_metadata$contents$maps)),
+        sprintf("- **Narratives:** %d files (text, JSON)\n", length(package_metadata$contents$narratives)),
+        sprintf("- **Citations:** %d files (JSON, BibTeX, CSV, CFF)\n", length(package_metadata$contents$citations)),
         "\n## File Structure\n\n",
         "```\n",
         paste0(sp_clean, "/\n"),
@@ -276,17 +452,24 @@ export_species_packages <- function(scenario_table,
       )
     )
     
-    summary_file <- file.path(packages_dir, "packaging_summary.json")
+    # Scaffolding artifacts live under <v>/checkover/ — invisible to the WoC frontend
+    # (anything not matching the species regex ^[A-Z][a-zA-Z]+_... is ignored).
+    summary_file <- file.path(ctx$current_scaffolding_dir, "packaging_summary.json")
     jsonlite::write_json(summary_data, summary_file, pretty = TRUE, auto_unbox = TRUE)
     
     # --- INDEX FILE (for easy browsing) ---
+    # Lists only species physically packaged at this version. For the full cohort
+    # with outcomes (including unchanged species), readers consult manifest.json.
     index_lines <- c(
       "# cheCkOVER Species Packages Index",
       "",
+      sprintf("Version: %s", framework_version),
       sprintf("Generated: %s", Sys.Date()),
-      sprintf("Total species: %d", length(packaged_species)),
+      sprintf("Species packaged at this version: %d", length(packaged_species)),
+      sprintf("Species in full cohort: %d (see manifest.json for unchanged ones)",
+              length(ctx$all_species)),
       "",
-      "## Species List",
+      "## Species packaged at this version",
       ""
     )
     
@@ -300,21 +483,80 @@ export_species_packages <- function(scenario_table,
         "3" = "[Combined]",
         "[Unknown]"
       )
+      outcome <- ctx$species_outcomes[[sp]]$outcome %||% "unknown"
+      outcome_badge <- sprintf("(%s)", outcome)
       
       index_lines <- c(
         index_lines,
-        sprintf("- **%s** %s - %d files - `%s/`", 
-                sp, scenario_badge, sp_info$files_count, sp_info$metadata$package_id)
+        sprintf("- **%s** %s %s - %d files - `%s/`", 
+                sp, scenario_badge, outcome_badge,
+                sp_info$files_count, sp_info$metadata$package_id)
       )
     }
     
-    index_file <- file.path(packages_dir, "INDEX.md")
+    index_file <- file.path(ctx$current_scaffolding_dir, "INDEX.md")
     writeLines(index_lines, index_file)
     
-    log_info("Packaging complete: %d species, %d total files", 
+    # --- VERSION MANIFEST (this is the consumer-facing source of truth) ---
+    # Schema: framework_version + totals + per-species entries (outcome,
+    # source_version, fingerprint). Unchanged species get a source_version
+    # pointing to a prior version; reprocessed/new point to the current version.
+    
+    outcome_count <- function(name) {
+      sum(vapply(ctx$species_outcomes, \(o) identical(o$outcome, name), logical(1)))
+    }
+    
+    # Determine prior_version: the most recent prior framework version we've seen.
+    # NA_character_ (not NULL) so jsonlite serializes as JSON null, not {}.
+    prior_v <- if (length(ctx$prior_versions) > 0L) ctx$prior_versions[1] else NA_character_
+    
+    # Build per-species manifest entries from ctx$species_outcomes
+    species_entries <- list()
+    for (sp in names(ctx$species_outcomes)) {
+      o <- ctx$species_outcomes[[sp]]
+      entry <- list(
+        outcome              = o$outcome,
+        source_version       = o$source_version,
+        # NA_character_ (not NULL) for new species so jsonlite serializes as null, not {}
+        prior_source_version = o$prior_source_version %||% NA_character_,
+        fingerprint          = o$fingerprint,
+        n_records            = o$n_records,
+        change_summary       = o$change_summary
+      )
+      # fingerprint_at_source: same as fingerprint, EXCEPT for unchanged species
+      # (where the source's fingerprint may differ from ours conceptually — but
+      # since unchanged means identical fps, they coincide. Stored explicitly
+      # for forward compatibility / audit.)
+      entry$fingerprint_at_source <- o$fingerprint
+      species_entries[[o$species_clean]] <- entry
+    }
+    
+    version_manifest <- list(
+      framework         = "cheCkOVER",
+      framework_version = framework_version,
+      run_id            = ctx$run_id,
+      generated_date    = format(ctx$generated_date, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+      prior_version     = prior_v,
+      totals = list(
+        total_species_in_cohort = length(ctx$all_species),
+        unchanged               = outcome_count("unchanged"),
+        reprocessed             = outcome_count("reprocessed"),
+        new                     = outcome_count("new"),
+        active_runtime_species  = length(ctx$active_species)
+      ),
+      species = species_entries
+    )
+    
+    manifest_path <- file.path(ctx$current_scaffolding_dir, "manifest.json")
+    jsonlite::write_json(version_manifest, manifest_path,
+                         pretty = TRUE, auto_unbox = TRUE, na = "null")
+    
+    log_info("Packaging complete: %d species packaged, %d total files",
              length(packaged_species), summary_data$total_files, module = module)
     log_info("Saved summary to: %s", summary_file, module = module)
     log_info("Saved index to: %s", index_file, module = module)
+    log_info("Saved manifest to: %s (%d total cohort entries)",
+             manifest_path, length(species_entries), module = module) 
     
     return(list(
       packages = packaged_species,

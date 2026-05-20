@@ -77,7 +77,7 @@ generate_all_narratives <- function(scenario_table,
         )
         
         if (!is.null(narrative)) {
-          sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
+          sp_clean <- make_package_id(sp)
           
           # Save as text
           txt_file <- file.path(narratives_dir, paste0(sp_clean, "_indigenous_narrative.txt"))
@@ -106,7 +106,7 @@ generate_all_narratives <- function(scenario_table,
         )
         
         if (!is.null(narrative)) {
-          sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
+          sp_clean <- make_package_id(sp)
           
           txt_file <- file.path(narratives_dir, paste0(sp_clean, "_non_indigenous_narrative.txt"))
           writeLines(narrative$text, txt_file)
@@ -133,7 +133,7 @@ generate_all_narratives <- function(scenario_table,
         )
         
         if (!is.null(narrative)) {
-          sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
+          sp_clean <- make_package_id(sp)
           
           txt_file <- file.path(narratives_dir, paste0(sp_clean, "_combined_narrative.txt"))
           writeLines(narrative$text, txt_file)
@@ -164,7 +164,7 @@ generate_all_narratives <- function(scenario_table,
 
 # --- HELPER: INDIGENOUS NARRATIVE ---
 .build_indigenous_narrative <- function(sp, reports, vern_map, feow_map, hb_names) {
-  sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
+  sp_clean <- make_package_id(sp)
   report_file <- file.path(dirname(dirname(reports$per_species[[1]])), "indigenous", paste0(sp_clean, ".json"))
   
   if (!file.exists(report_file)) return(NULL)
@@ -333,7 +333,7 @@ generate_all_narratives <- function(scenario_table,
 
 # --- HELPER: NON-INDIGENOUS NARRATIVE ---
 .build_non_indigenous_narrative <- function(sp, reports, vern_map, feow_map, hb_names) {
-  sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
+  sp_clean <- make_package_id(sp)
   report_file <- file.path(dirname(dirname(reports$per_species[[1]])), "non_indigenous", paste0(sp_clean, ".json"))
   
   if (!file.exists(report_file)) return(NULL)
@@ -396,7 +396,7 @@ generate_all_narratives <- function(scenario_table,
 
 # --- HELPER: SCENARIO 3 NARRATIVE ---
 .build_scenario3_narrative <- function(sp, merged, vern_map, feow_map, hb_names) {
-  sp_clean <- gsub("[^A-Za-z0-9_]", "_", sp)
+  sp_clean <- make_package_id(sp)
   
   if (!sp %in% names(merged$reports)) return(NULL)
   

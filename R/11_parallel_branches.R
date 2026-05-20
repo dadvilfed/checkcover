@@ -54,7 +54,9 @@ process_branch_indigenous <- function(result_indigenous,
     indigenous_reports <- generate_indigenous_reports(
       result_indigenous,
       vernacular_lookup = vernacular_lookup,
-      output_dir = output_dir
+      output_dir = output_dir,
+      feow_lookup_path = config$dictionaries$feow, 
+      hydrobasin_names = hydrobasin_names
     )
     
     elapsed <- difftime(Sys.time(), start_time, units = "secs")
@@ -126,7 +128,9 @@ process_branch_non_indigenous <- function(result_non_indigenous,
     non_indigenous_reports <- generate_non_indigenous_reports(
       result_non_indigenous,
       vernacular_lookup = vernacular_lookup,
-      output_dir = output_dir
+      output_dir = output_dir,
+      feow_lookup_path = config$dictionaries$feow, 
+      hydrobasin_names = hydrobasin_names
     )
     
     elapsed <- difftime(Sys.time(), start_time, units = "secs")

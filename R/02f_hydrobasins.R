@@ -1,267 +1,3 @@
-# #### MODULE 2F: HYDROBASINS ENRICHMENT (MEMORY-OPTIMIZED) ####
-# 
-# enrich_with_hydrobasins_merged <- function(result,
-#                                            hydro_dir,
-#                                            global_files,
-#                                            output_dir,
-#                                            cache_dir,
-#                                            crop_to_points_bbox = TRUE,
-#                                            bbox_expand_km = 50,
-#                                            nearest_fallback = TRUE,
-#                                            NEAREST_MAX_KM = 10,
-#                                            reuse_cached = FALSE,
-#                                            parallel = FALSE,
-#                                            batch_size = 50) {  # NEW: Batch processing
-#   module <- "MODULE2F_HYDROBASINS"
-#   
-#   with_log_section(module, {
-#     log_info("=== MODULE 2F: HYDROBASINS ENRICHMENT (MEMORY-OPTIMIZED) ===", module = module)
-#     
-#     # Preconditions
-#     if (!all(c("clean_data", "clean_sf") %in% names(result))) stop("Missing data")
-#     if (!dir.exists(hydro_dir)) stop("Hydro dir not found")
-#     if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
-#     if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
-#     
-#     # Check for existing enriched data
-#     out_tsv <- file.path(output_dir, "clean_occurrences_with_hydrobasin.tsv")
-#     out_rds <- file.path(output_dir, "clean_occurrences_sf_with_hydrobasin.rds")
-#     
-#     if (reuse_cached && file.exists(out_tsv) && file.exists(out_rds)) {
-#       log_info("Found existing HydroBASINS enriched data. Loading from cache...", module = module)
-#       tryCatch({
-#         cached_df <- read_tsv(out_tsv)
-#         cached_sf <- readRDS(out_rds)
-#         if ("hydrobasin" %in% names(cached_df) && "hydrobasin" %in% names(cached_sf)) {
-#           result$clean_data <- cached_df
-#           result$clean_sf <- cached_sf
-#           result$files_created <- unique(c(result$files_created, out_tsv, out_rds))
-#           log_info("Successfully loaded cached HydroBASINS enrichment.", module = module)
-#           return(result)
-#         }
-#       }, error = function(e) {
-#         log_warn("Failed to load cache: %s. Re-running.", conditionMessage(e), module = module)
-#       })
-#     }
-#     
-#     # CRITICAL FIX: Improved cache loading with validation
-#     .process_global_level <- function(lvl, fname, target_crs) {
-#       cpath <- file.path(cache_dir, sprintf("hydro_lev%02d_merged.rds", as.integer(lvl)))
-#       
-#       # Expected feature counts (approximate)
-#       expected_counts <- list("6" = 30000, "8" = 150000, "10" = 800000)
-#       min_threshold <- expected_counts[[as.character(lvl)]] %||% 50000
-#       
-#       if (reuse_cached && file.exists(cpath)) {
-#         log_info("Loading cached L%d...", lvl, module = module)
-#         cached <- tryCatch(readRDS(cpath), error = function(e) NULL)
-#         
-#         if (!is.null(cached) && nrow(cached) >= min_threshold) {
-#           log_info("Cache validated: %d features", nrow(cached), module = module)
-#           return(cached)
-#         } else if (!is.null(cached)) {
-#           log_error("CORRUPTED CACHE: L%d has only %d features (expected >%d)", 
-#                     lvl, nrow(cached), min_threshold, module = module)
-#         }
-#       }
-#       
-#       # Load from shapefile
-#       log_info("Reading global L%d shapefile: %s", lvl, fname, module = module)
-#       shp <- file.path(hydro_dir, fname)
-#       if (!file.exists(shp)) stop(paste("Missing:", shp))
-#       
-#       lyr <- sf::st_read(shp, quiet = TRUE, stringsAsFactors = FALSE)
-#       log_info("Loaded %d features from source", nrow(lyr), module = module)
-#       
-#       lyr <- .std_geom(lyr)
-#       
-#       # Use HYBAS_ID directly
-#       if ("HYBAS_ID" %in% names(lyr)) {
-#         lyr$HB_LABEL <- as.character(lyr$HYBAS_ID)
-#       } else if ("PFAF_ID" %in% names(lyr)) {
-#         lyr$HB_LABEL <- as.character(lyr$PFAF_ID)
-#       } else {
-#         stop("No HYBAS_ID or PFAF_ID column found!")
-#       }
-#       
-#       lyr <- lyr[, c("HB_LABEL", "geometry"), drop = FALSE]
-#       
-#       # Validate
-#       dup_count <- sum(duplicated(lyr$HB_LABEL))
-#       if (dup_count > 0) {
-#         stop("Duplicate basin IDs detected!")
-#       }
-#       
-#       if (sf::st_crs(lyr) != target_crs) {
-#         log_info("Transforming to target CRS...", module = module)
-#         lyr <- sf::st_transform(lyr, target_crs)
-#       }
-#       
-#       log_info("Validating geometries...", module = module)
-#       invalid_count <- sum(!sf::st_is_valid(lyr))
-#       if (invalid_count > 0) {
-#         log_warn("Fixing %d invalid geometries...", invalid_count, module = module)
-#         lyr <- sf::st_make_valid(lyr)
-#       }
-#       
-#       # final_count <- nrow(lyr)
-#       # if (final_count < min_threshold) {
-#       #   stop(sprintf("Feature count too low: %d (expected >%d)", final_count, min_threshold))
-#       # }
-#       final_count <- nrow(lyr)
-#       # Validation disabled - assuming correct HydroBASINS files
-#       log_info("Loaded %d features for L%d (validation skipped)", final_count, lvl, module = module)
-#       
-#       # CRITICAL FIX: Use file locking
-#       .save_with_lock(lyr, cpath)
-#       
-#       return(lyr)
-#     }
-#     
-#     cd <- result$clean_data
-#     target_crs <- sf::st_crs(result$clean_sf)
-#     
-#     # Load layers with progress
-#     log_info("Loading HydroBASINS layers...", module = module)
-#     lyr_L10 <- .process_global_level(10, global_files[["10"]], target_crs); gc()
-#     lyr_L08 <- .process_global_level(8, global_files[["8"]], target_crs); gc()
-#     lyr_L06 <- .process_global_level(6, global_files[["6"]], target_crs); gc()
-#     
-#     level_for_cat <- c("micro-endemic" = 10, "endemic" = 10, "regional" = 8, "cosmopolitan" = 6)
-#     default_level <- 8
-#     
-#     result$clean_data$hydrobasin <- NA_character_
-#     result$clean_sf$hydrobasin <- NA_character_
-#     
-#     species_list <- unique(cd$species)
-#     species_list <- species_list[!is.na(species_list) & nzchar(species_list)]
-#     
-#     log_info("Processing %d species in batches...", length(species_list), module = module)
-#     
-#     # CRITICAL FIX: Process in memory-safe batches
-#     process_species_hydrobasin <- function(sp) {
-#       sp_idx <- which(cd$species == sp)
-#       if (length(sp_idx) == 0) return(NULL)
-#       
-#       sp_pts <- result$clean_sf[sp_idx, , drop = FALSE]
-#       
-#       # Determine level - check for both column name variants
-#       cat_val <- if ("iucn_category" %in% names(cd)) {
-#         cd$iucn_category[sp_idx][1]
-#       } else if ("category" %in% names(cd)) {
-#         cd$category[sp_idx][1]
-#       } else if ("distribution_category" %in% names(cd)) {
-#         cd$distribution_category[sp_idx][1]
-#       } else {
-#         NA_character_
-#       }
-#       
-#       # Handle empty or NA values
-#       if (is.null(cat_val) || length(cat_val) == 0 || is.na(cat_val)) {
-#         cat_val <- "regional"
-#       }
-#       lvl <- if (cat_val %in% names(level_for_cat)) level_for_cat[[cat_val]] else default_level
-#       
-#       lyr <- switch(as.character(lvl), "10" = lyr_L10, "8" = lyr_L08, "6" = lyr_L06, lyr_L08)
-#       
-#       # Crop to bbox
-#       bb <- sf::st_bbox(sp_pts)
-#       bb_poly <- sf::st_as_sfc(bb)
-#       
-#       ea <- 6933
-#       bb_ea <- tryCatch(sf::st_transform(bb_poly, ea), error = function(e) NULL)
-#       
-#       if (!is.null(bb_ea)) {
-#         buf_ea <- sf::st_buffer(bb_ea, dist = bbox_expand_km * 1000)
-#         buf_orig <- sf::st_transform(buf_ea, target_crs)
-#         lyr_small <- try(suppressWarnings(sf::st_crop(lyr, buf_orig)), silent = TRUE)
-#       } else {
-#         lyr_small <- lyr
-#       }
-#       
-#       if (inherits(lyr_small, "try-error") || nrow(lyr_small) == 0) {
-#         lyr_small <- lyr
-#       }
-#       
-#       # CRITICAL: Use st_filter to only keep basins containing points
-#       basins_matched <- try(sf::st_filter(lyr_small, sp_pts), silent = TRUE)
-#       
-#       if (inherits(basins_matched, "try-error") || nrow(basins_matched) == 0) {
-#         labels <- rep(NA_character_, nrow(sp_pts))
-#       } else {
-#         ix <- try(.safe_intersects(sp_pts, basins_matched), silent = TRUE)
-#         
-#         if (inherits(ix, "try-error")) {
-#           labels <- rep(NA_character_, nrow(sp_pts))
-#         } else {
-#           labels <- character(nrow(sp_pts))
-#           for (i in seq_along(sp_idx)) {
-#             match_idx <- ix[[i]]
-#             if (length(match_idx) > 0) {
-#               basin_ids <- basins_matched$HB_LABEL[match_idx]
-#               basin_ids_with_level <- paste0("L", lvl, ":", basin_ids)
-#               labels[i] <- paste(unique(basin_ids_with_level), collapse = " | ")
-#             } else {
-#               labels[i] <- NA_character_
-#             }
-#           }
-#         }
-#       }
-#       
-#       # Nearest fallback
-#       if (nearest_fallback && any(is.na(labels)) && 
-#           !inherits(basins_matched, "try-error") && nrow(basins_matched) > 0) {
-#         miss <- which(is.na(labels))
-#         nn <- sf::st_nearest_feature(sp_pts[miss, ], basins_matched)
-#         dists <- sf::st_distance(sp_pts[miss, ], basins_matched[nn, ], by_element = TRUE)
-#         valid_nn <- as.numeric(dists) <= (NEAREST_MAX_KM * 1000)
-#         
-#         if (any(valid_nn)) {
-#           nearest_ids <- basins_matched$HB_LABEL[nn[valid_nn]]
-#           nearest_ids_with_level <- paste0("L", lvl, ":", nearest_ids)
-#           labels[miss[valid_nn]] <- nearest_ids_with_level
-#         }
-#       }
-#       
-#       return(list(species = sp, indices = sp_idx, labels = labels))
-#     }
-#     
-#     # CRITICAL: Process in batches with progress bar
-#     pb <- create_progress_bar(length(species_list))
-#     
-#     results_list <- process_in_batches(
-#       items = species_list,
-#       batch_size = batch_size,
-#       process_fn = function(sp) {
-#         pb$tick()
-#         process_species_hydrobasin(sp)
-#       }
-#     )
-#     
-#     pb$terminate()
-#     
-#     # Assign results
-#     log_info("Assigning results back...", module = module)
-#     for (res in results_list) {
-#       if (!is.null(res) && !is.null(res$indices)) {
-#         result$clean_sf$hydrobasin[res$indices] <- res$labels
-#         result$clean_data$hydrobasin[res$indices] <- res$labels
-#       }
-#     }
-#     
-#     # Save
-#     write_tsv(result$clean_data, out_tsv)
-#     saveRDS(result$clean_sf, out_rds)
-#     
-#     result$files_created <- c(result$files_created, out_tsv, out_rds)
-#     
-#     assigned_count <- sum(!is.na(result$clean_data$hydrobasin))
-#     log_info("HydroBASINS complete: %d/%d records assigned", 
-#              assigned_count, nrow(result$clean_data), module = module)
-#     
-#     return(result)
-#   })
-# }
 #### MODULE 2F: ENRICH_WITH_HYDROBASINS_MERGED() — WITH BATCHING & BRANCH DETECTION ####
 
 enrich_with_hydrobasins_merged <- function(result,
@@ -503,23 +239,53 @@ enrich_with_hydrobasins_merged <- function(result,
       
       lyr <- switch(as.character(lvl), "10"=lyr_L10, "8"=lyr_L08, "6"=lyr_L06, lyr_L08)
       
+      # ─── BBOX-CROP DECISION ───────────────────────────────────────
+      # Skip cropping when:
+      #   (a) layer is small enough to use whole (L6 = 16k features)
+      #   (b) species bbox spans more than 90° in either dimension
+      #       (multi-continental → crop produces invalid geometry)
       bb <- sf::st_bbox(sp_pts)
-      bb_poly <- sf::st_as_sfc(bb)
+      bb_width  <- as.numeric(bb["xmax"] - bb["xmin"])
+      bb_height <- as.numeric(bb["ymax"] - bb["ymin"])
       
-      ea <- 6933
-      bb_ea <- tryCatch(sf::st_transform(bb_poly, ea), error=function(e) NULL)
+      skip_crop <- (nrow(lyr) < 50000) || (bb_width > 90) || (bb_height > 90)
       
-      if(!is.null(bb_ea)) {
-        buf_ea <- sf::st_buffer(bb_ea, dist = bbox_expand_km * 1000)
-        buf_orig <- sf::st_transform(buf_ea, target_crs)
-        lyr_small <- try(suppressWarnings(sf::st_crop(lyr, buf_orig)), silent=TRUE)
+      if (skip_crop) {
+        lyr_small <- lyr
+        if (bb_width > 90 || bb_height > 90) {
+          log_info("  [%s] Multi-continental species (bbox %.0f° × %.0f°) — using full global L%d layer (%d features)",
+                   sp, bb_width, bb_height, lvl, nrow(lyr), module = module)
+        }
       } else {
-        lyr_small <- lyr
+        bb_poly <- sf::st_as_sfc(bb)
+        ea <- 6933
+        bb_ea <- tryCatch(sf::st_transform(bb_poly, ea), error = function(e) NULL)
+        
+        if (!is.null(bb_ea)) {
+          buf_ea <- sf::st_buffer(bb_ea, dist = bbox_expand_km * 1000)
+          buf_orig <- tryCatch(sf::st_transform(buf_ea, target_crs), error = function(e) NULL)
+          
+          if (!is.null(buf_orig) && all(sf::st_is_valid(buf_orig))) {
+            lyr_small <- try(suppressWarnings(sf::st_crop(lyr, buf_orig)), silent = TRUE)
+          } else {
+            lyr_small <- lyr  # Invalid buffer geometry → fall back to full layer
+          }
+        } else {
+          lyr_small <- lyr
+        }
+        
+        # Safety net: if crop produced empty or errored, fall back to full layer
+        if (inherits(lyr_small, "try-error") || nrow(lyr_small) == 0) {
+          log_warn("  [%s] Bbox crop failed/empty — falling back to full L%d layer", 
+                   sp, lvl, module = module)
+          lyr_small <- lyr
+        }
       }
       
-      if (inherits(lyr_small, "try-error") || nrow(lyr_small) == 0) {
-        lyr_small <- lyr
-      }
+      # Diagnostic: log layer size used for this species
+      log_debug("  [%s] L%d: using %d basin features (full=%d)", 
+                sp, lvl, nrow(lyr_small), nrow(lyr), module = module)
+      
       
       basins_matched <- try(sf::st_filter(lyr_small, sp_pts), silent=TRUE)
       
@@ -560,6 +326,14 @@ enrich_with_hydrobasins_merged <- function(result,
         }
       }
       
+      n_assigned <- sum(!is.na(labels))
+      n_total <- length(labels)
+      if (n_assigned < n_total * 0.8) {
+        log_warn("  [%s] LOW ASSIGNMENT: %d/%d points (%.0f%%)",
+                 sp, n_assigned, n_total, 100 * n_assigned / n_total,
+                 module = module)
+      }
+
       return(list(
         species = sp,
         indices = sp_idx,

@@ -47,6 +47,28 @@ nz_or_na <- function(x) {
   x
 }
 
+# Build filesystem-safe package ID from a species display name.
+# Per cheCkOVER package spec v1.0 (Lucian / WoC integration):
+#   1. Remove parentheses (subgenus survives as a bare word)
+#   2. Replace whitespace with underscore
+#   3. Collapse consecutive underscores
+# Casing is preserved (subgenus capitalisation is part of the name).
+#
+#   make_package_id("Astacus astacus")
+#     -> "Astacus_astacus"
+#   make_package_id("Cambarellus (Cambarellus) chapalanus")
+#     -> "Cambarellus_Cambarellus_chapalanus"
+#   make_package_id("Procambarus hagenianus vesticeps")
+#     -> "Procambarus_hagenianus_vesticeps"
+make_package_id <- function(sp) {
+  out <- trimws(as.character(sp))
+  out <- gsub("[()]", "", out, perl = TRUE)
+  out <- gsub("\\s+", "_", out, perl = TRUE)
+  out <- gsub("_+", "_", out, perl = TRUE)
+  out <- gsub("^_+|_+$", "", out, perl = TRUE)
+  out
+}
+
 # Expand bbox by kilometers (Equal Area projection)
 .expand_bbox_km <- function(bbox_sfc, target_crs, km) {
   if (km <= 0) return(bbox_sfc)
@@ -323,4 +345,112 @@ get_species_by_scenario <- function(scenario_table, scenario_num) {
   scenario_table %>%
     filter(scenario == scenario_num) %>%
     pull(species)
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# EXTINCTION MASKING ORCHESTRATOR (post-Phase-1.5, pre-Phase-2)
+# ──────────────────────────────────────────────────────────────────────────────
+
+#' Apply per-species extinction masking to both indigenous and non-indigenous
+#' branches.
+#'
+#' Walks each active species, computes its extinction events, and applies the
+#' 500m geodesic mask to both branches' clean_data. Adds two columns:
+#'   temporal_status:           "active" | "suppressed" | "extinct"
+#'   suppressed_by_extinction:  NA or extinction record_id
+#'
+#' Modules downstream (3A/3C/4A/4C reports + metrics) filter on
+#' temporal_status == "active" so extinct + suppressed records don't pollute
+#' metrics. Existing modules without temporal_status awareness will still see
+#' all records (the column simply doesn't exist), so this is forward-compatible.
+#'
+#' Requires apply_spatial_temporal_mask() + parse_extinction_causes() from
+#' Module 11 (R/11_temporal_delta.R) to be sourced.
+#'
+#' @param result_indigenous       List with $clean_data and $clean_sf.
+#' @param result_non_indigenous   List with $clean_data and $clean_sf.
+#' @param active_species          Character vector of species names to process.
+#' @return Named list with the same two objects, with `temporal_status` +
+#'         `suppressed_by_extinction` columns added.
+apply_extinction_masking_to_branches <- function(result_indigenous,
+                                                 result_non_indigenous,
+                                                 active_species) {
+  
+  module <- "EXTINCTION_MASKING"
+  if (exists("log_info", mode = "function")) {
+    log_info("=== Applying extinction masking (500m geodesic) ===", module = module)
+  }
+  
+  # Process one branch (indigenous or non_indigenous). For each species:
+  #   1. Slice the branch to that species' records
+  #   2. Parse extinctions (records with is_extinct == TRUE)
+  #   3. Apply 500m mask (per-species, scoped)
+  #   4. Stitch tagged slice back into the branch's clean_data
+  process_branch <- function(result_branch, branch_label) {
+    if (is.null(result_branch) || is.null(result_branch$clean_data) ||
+        nrow(result_branch$clean_data) == 0L) {
+      return(result_branch)
+    }
+    cd <- result_branch$clean_data
+    
+    # Initialize columns (default everything active)
+    cd$temporal_status          <- "active"
+    cd$suppressed_by_extinction <- NA_character_
+    
+    n_extinct_total    <- 0L
+    n_suppressed_total <- 0L
+    
+    for (sp in active_species) {
+      idx <- which(cd$species == sp)
+      if (length(idx) == 0L) next
+      sp_slice <- cd[idx, , drop = FALSE]
+      # Need is_extinct present
+      if (!"is_extinct" %in% names(sp_slice)) next
+      if (!any(!is.na(sp_slice$is_extinct) & sp_slice$is_extinct == TRUE)) next
+      
+      ext <- tryCatch(parse_extinction_causes(sp_slice),
+                      error = function(e) NULL,
+                      warning = function(w) parse_extinction_causes(sp_slice))
+      if (is.null(ext) || nrow(ext) == 0L) next
+      
+      masked <- tryCatch(
+        suppressWarnings(apply_spatial_temporal_mask(sp_slice, ext, log_unlinked = FALSE)),
+        error = function(e) {
+          if (exists("log_warn", mode = "function")) {
+            log_warn("Masking failed for %s: %s", sp, conditionMessage(e), module = module)
+          }
+          sp_slice  # fall through with unmasked slice
+        }
+      )
+      
+      # Stitch back
+      cd$temporal_status[idx]          <- masked$temporal_status
+      cd$suppressed_by_extinction[idx] <- masked$suppressed_by_extinction
+      
+      n_extinct_total    <- n_extinct_total    + sum(masked$temporal_status == "extinct",    na.rm = TRUE)
+      n_suppressed_total <- n_suppressed_total + sum(masked$temporal_status == "suppressed", na.rm = TRUE)
+    }
+    
+    if (exists("log_info", mode = "function")) {
+      log_info("Branch '%s': %d extinct + %d suppressed (of %d records, %d will count as 'active')",
+               branch_label, n_extinct_total, n_suppressed_total, nrow(cd),
+               nrow(cd) - n_extinct_total - n_suppressed_total, module = module)
+    }
+    
+    # Also tag clean_sf if present
+    result_branch$clean_data <- cd
+    if (!is.null(result_branch$clean_sf) && nrow(result_branch$clean_sf) == nrow(cd)) {
+      result_branch$clean_sf$temporal_status          <- cd$temporal_status
+      result_branch$clean_sf$suppressed_by_extinction <- cd$suppressed_by_extinction
+    }
+    result_branch
+  }
+  
+  result_indigenous     <- process_branch(result_indigenous,     "indigenous")
+  result_non_indigenous <- process_branch(result_non_indigenous, "non_indigenous")
+  
+  list(
+    result_indigenous     = result_indigenous,
+    result_non_indigenous = result_non_indigenous
+  )
 }

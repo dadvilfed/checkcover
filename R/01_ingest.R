@@ -262,7 +262,21 @@ resolve_taxonomy <- function(species_list, module = "MODULE1_INGEST") {
     pb$tick()
     
     tryCatch({
-      recs <- worrms::wm_records_name(sp, fuzzy = TRUE, marine_only = FALSE)
+      recs <- NULL
+      for (.attempt in 1:3) {
+        recs <- tryCatch(
+          worrms::wm_records_name(sp, fuzzy = TRUE, marine_only = FALSE),
+          error = function(e) {
+            if (grepl("connect|timed out|port 443|resolve host", e$message,
+                      ignore.case = TRUE) && .attempt < 3) {
+              Sys.sleep(2 * .attempt)  # 2s, 4s backoff on network errors
+              return(NULL)
+            }
+            stop(e)  # non-network error, or out of retries: propagate
+          }
+        )
+        if (!is.null(recs)) break
+      }      
       
       if (!is.null(recs) && nrow(recs) > 0) {
         accepted <- recs[recs$status == "accepted", ]
@@ -349,11 +363,17 @@ resolve_taxonomy <- function(species_list, module = "MODULE1_INGEST") {
       
     }, error = function(e) {
       log_error("Error resolving '%s': %s", sp, e$message, module = module)
+      # NEVER write the raw error into a data field — exception messages can
+      # contain newlines/tabs (e.g. multi-line curl connection errors) that
+      # split the TSV row downstream. Collapse whitespace and truncate.
+      .safe_msg <- gsub("[\r\n\t]+", " ", e$message)
+      .safe_msg <- gsub("\\s+", " ", trimws(.safe_msg))
+      .safe_msg <- substr(.safe_msg, 1, 120)
       taxonomy_map <<- rbind(taxonomy_map, data.frame(
         original_name = sp,
         accepted_name = NA,
         aphia_id = NA,
-        status = paste("error:", e$message),
+        status = paste0("error: ", .safe_msg),
         rank = NA,
         authority = NA,
         superdomain = NA, kingdom = NA, phylum = NA, subphylum = NA,
@@ -479,8 +499,15 @@ ingest_clean <- function(file_path, output_dir = "checkover_output",
       summary_stats$taxonomy_resolution <- taxonomy_summary
     }
     
-    # Export cleaned data
+    # Export cleaned data. Defensive scrub: strip CR/LF/tab from every
+    # character column so no enrichment failure (now or future) can ever
+    # split a TSV row. This is belt-and-suspenders on top of the WoRMS
+    # error sanitization.
     clean_file <- file.path(output_dir, "clean_occurrences.tsv")
+    .chr_cols <- names(clean_data)[vapply(clean_data, is.character, logical(1))]
+    for (.cc in .chr_cols) {
+      clean_data[[.cc]] <- gsub("[\r\n\t]+", " ", clean_data[[.cc]])
+    }
     write_tsv(clean_data, clean_file)
     log_info("Saved cleaned occurrences to: %s", clean_file, module = module)
     
