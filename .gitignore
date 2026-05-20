@@ -1,0 +1,18 @@
+# R artifacts
+.RData
+.Rhistory
+.Rproj.user/
+*.Rproj
+
+# Data files (too large / not needed)
+WoC_1_0.tsv
+WoC_1_1.tsv
+database-WoC_mock2.tsv
+
+# Output folders
+checkover_output/
+spatial_data/
+
+# Old/backup files
+Table_S3_old.tsv
+ecoregions_list_old.tsv
