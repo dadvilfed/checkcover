@@ -4,7 +4,7 @@
 # 1. Input/Output Paths
 CONFIG <- list(
   # Input file (Excel database)
-  input_file = "WoC_1_1.tsv",
+  input_file = "WoC_1_0.tsv",
   
   # Output directory
   root_output_dir = "checkover_output",
@@ -13,7 +13,7 @@ CONFIG <- list(
   version = "production",
   
   # Output package version (semantic; drives processed/checkover/<version>/ folder)
-  framework_version = "1.1",
+  framework_version = "1.0",
   
   # 2. Taxonomy Settings
   taxonomy = list(
