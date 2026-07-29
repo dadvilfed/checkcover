@@ -34,13 +34,15 @@ RUN install2.r --error --skipinstalled --ncpus -1 \
 WORKDIR /work
 
 # Pipeline sources only. Data directories are mount points.
-COPY R/                             R/
-COPY tests/                         tests/
-COPY checkcover_main.R config.R     ./
-COPY extract_manuscript_summaries.R extract_manuscript_tables.R \
-     verify_geo_acceptance.R regenerate_supplement_S7.R ./
-COPY WoC_canonical_country_continent.tsv WoC_canonical_geography.md \
-     ecoregions_list.tsv vernacular_names_wide.tsv ./
+COPY R/                          R/
+COPY tests/                      tests/
+COPY checkcover_main.R config.R  ./
+
+# Offline lookup tables. NB the two prefixed filenames: these tables are also
+# published as manuscript supplements and carry their supplement number in the
+# name. config.R must point at whatever names are used here.
+COPY WoC_canonical_country_continent.tsv WoC_canonical_geography.md ./
+COPY "(Table_S2)vernacular_names_wide.tsv" "(Table_S4)ecoregions_list.tsv" ./
 
 # Fail fast on a broken image: the suite runs without occurrence data or
 # reference layers, so it is a genuine smoke test of the build.
