@@ -32,11 +32,12 @@ clean_occurrences*
 
 # --- Unreferenced binaries -------------------------------------------------
 # Not read by any module; keeping them out avoids shipping blobs of unclear
-# provenance in a public repo.
-#   RollData.tsv        - misnamed: actually an Excel workbook
+# provenance. RollData.tsv is NOT listed: despite the misleading extension it is
+# an Excel workbook, but it is already published in this repository, so removing
+# it is a deliberate decision for the maintainers rather than a .gitignore side
+# effect.
 #   README.docx         - superseded by README.md
 #   vernacular_*.docx   - legacy; the pipeline reads the .tsv
-RollData.tsv
 README.docx
 vernacular_names_wide.docx
 
@@ -53,8 +54,9 @@ spatial_data/
 *.prj
 *.cpg
 
-# Large derived lookup shipped separately (39 MB HydroBASINS name table)
-Table_S3.tsv
+# NB: Table_S3.tsv (HydroBASINS name lookup, 39 MB) and Table_S5.tsv are NOT
+# ignored — they are supplementary tables already published in this repository
+# and cited by the accompanying manuscript. Excluding them would delete them.
 
 # --- Generated output ------------------------------------------------------
 # Reproducible by running the pipeline; large and churny.

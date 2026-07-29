@@ -1,0 +1,16 @@
+# Never copy data, credentials or output into the image.
+*.ppk
+*.pem
+*.key
+WoC_*.tsv
+!WoC_canonical_country_continent.tsv
+database-WoC*.tsv
+spatial_data/
+checkover_output/
+manuscript/
+checkover_handover_*/
+.Rproj.user/
+.claude/
+.git/
+*.rar
+*.zip

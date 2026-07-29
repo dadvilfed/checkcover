@@ -284,5 +284,17 @@ UNEP-WCMC & IUCN (2026) Protected Planet; Lehner & Grill (2013)
 
 ## License
 
-Code released under **CC BY 4.0**. Reference layers and occurrence data remain
-under their own licences.
+Two different things are licensed two different ways:
+
+| What | Licence |
+|---|---|
+| **This software** — everything in `R/`, `tests/`, and the root scripts | **GPL-3.0-or-later** (see [`LICENSE`](LICENSE)) |
+| **Data packages produced by running it** — the per-species metrics, narratives, maps and citations | **CC BY 4.0**, recorded in each package's `provenance.license` |
+
+The split is deliberate: the pipeline is copyleft so improvements stay open,
+while the biodiversity products it generates are permissively licensed so they
+can be reused and cited freely.
+
+Reference layers (Natural Earth, GADM, HydroBASINS, FEOW, TEOW, WDPA) and the
+underlying occurrence records remain under their own licences and are not
+redistributed here.
