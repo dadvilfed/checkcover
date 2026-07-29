@@ -1,0 +1,85 @@
+# ==========================================================================
+# cheCkOVER — files that must NOT be published
+# ==========================================================================
+# This repository is PUBLIC. Everything below is excluded deliberately; read
+# the reason before removing any line.
+
+# --- Credentials -----------------------------------------------------------
+# Never commit keys. A key pushed to a public repo is compromised immediately
+# and must be rotated, not just deleted.
+*.ppk
+*.pem
+*.key
+id_rsa*
+.Renviron
+.env
+
+# --- Raw occurrence data ---------------------------------------------------
+# The WoC exports carry exact coordinates for records flagged confidential
+# (confidentialityLevel 1 and 2 — 69,040 of 124,328 in the 2026-07 export).
+# cheCkOVER's own export module strips longitude/latitude/confidentiality from
+# published packages precisely so those localities are not disclosed; committing
+# the raw export would defeat that. Obtain the data from World of Crayfish under
+# its access terms instead.
+WoC_*.tsv
+database-WoC*.tsv
+*_occurrences*.tsv
+*_occurrences*.csv
+clean_occurrences*
+# ...but the canonical geographic vocabulary is a small lookup table the
+# pipeline needs, not occurrence data. Keep it.
+!WoC_canonical_country_continent.tsv
+
+# --- Unreferenced binaries -------------------------------------------------
+# Not read by any module; keeping them out avoids shipping blobs of unclear
+# provenance in a public repo.
+#   RollData.tsv        - misnamed: actually an Excel workbook
+#   README.docx         - superseded by README.md
+#   vernacular_*.docx   - legacy; the pipeline reads the .tsv
+RollData.tsv
+README.docx
+vernacular_names_wide.docx
+
+# --- Third-party reference layers -----------------------------------------
+# ~2.5 GB, and redistribution is governed by each provider's licence
+# (HydroBASINS/HydroSHEDS, WWF FEOW/TEOW, UNEP-WCMC WDPA, GADM, Natural Earth).
+# Download them yourself — see README "Reference data".
+spatial_data/
+*.shp
+*.shx
+*.dbf
+*.sbn
+*.sbx
+*.prj
+*.cpg
+
+# Large derived lookup shipped separately (39 MB HydroBASINS name table)
+Table_S3.tsv
+
+# --- Generated output ------------------------------------------------------
+# Reproducible by running the pipeline; large and churny.
+checkover_output/
+*.rar
+*.zip
+
+# --- Manuscript ------------------------------------------------------------
+# Kept out of the code repo; lives with the journal submission.
+manuscript/
+checkover_handover_*/
+
+# --- R / RStudio -----------------------------------------------------------
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj.user
+
+# --- Editors / OS ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# --- Agent scratch ---------------------------------------------------------
+.claude/

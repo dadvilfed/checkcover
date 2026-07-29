@@ -1,0 +1,100 @@
+country	canonical_continent	records	transcontinental_needs_coord_check
+Albania	Europe	17	False
+Angola	Africa	1	False
+Argentina	South America	6	False
+Armenia	Asia	7	False
+Australia	Oceania	2500	False
+Austria	Europe	1373	False
+Azerbaijan	Asia	31	False
+Belarus	Europe	372	False
+Belgium	Europe	5311	False
+Bosnia and Herzegovina	Europe	201	False
+Brazil	South America	232	False
+Bulgaria	Europe	549	False
+Canada	North America	475	False
+Chile	South America	328	False
+China	Asia	852	False
+Colombia	South America	434	False
+Costa Rica	North America	18	False
+Croatia	Europe	1082	False
+Cuba	North America	2	False
+Cyprus	Asia	90	False
+Czech Republic	Europe	713	False
+Denmark	Europe	63	False
+Dominican Republic	North America	27	False
+Ecuador	South America	19	False
+Egypt	Africa	53	False
+Estonia	Europe	1214	False
+Eswatini	Africa	25	False
+Fiji	Oceania	1	False
+Finland	Europe	1494	False
+France	Europe	14503	True
+Georgia	Asia	16	False
+Germany	Europe	4009	False
+Greece	Europe	211	False
+Guatemala	North America	3	False
+Hungary	Europe	1257	False
+Indonesia	Asia	270	False
+Iran	Asia	24	False
+Ireland	Europe	252	False
+Israel	Asia	25	False
+Italy	Europe	2641	False
+Jamaica	North America	3	False
+Japan	Asia	794	False
+Kazakhstan	Asia	31	False
+Kenya	Africa	118	False
+Kosovo	Europe	2	False
+Latvia	Europe	557	False
+Liechtenstein	Europe	6	False
+Lithuania	Europe	29	False
+Luxembourg	Europe	70	False
+Madagascar	Africa	102	False
+Malaysia	Asia	19	False
+Malta	Europe	60	False
+Mauritius	Africa	1	False
+Mexico	North America	1388	False
+Moldova	Europe	3	False
+Mongolia	Asia	1	False
+Montenegro	Europe	71	False
+Morocco	Africa	38	False
+Mozambique	Africa	24	False
+Namibia	Africa	4	False
+Netherlands	Europe	2082	False
+New Zealand	Oceania	65	False
+Nicaragua	North America	1	False
+North Macedonia	Europe	106	False
+Norway	Europe	80	False
+Panama	North America	1	False
+Papua New Guinea	Oceania	8	True
+Peru	South America	3	False
+Philippines	Asia	1	False
+Poland	Europe	753	False
+Portugal	Europe	2868	False
+Romania	Europe	967	False
+Russia	Europe	275	True
+Rwanda	Africa	11	False
+Serbia	Europe	329	False
+Singapore	Asia	12	False
+Slovakia	Europe	559	False
+Slovenia	Europe	364	False
+South Africa	Africa	124	False
+South Korea	Asia	147	False
+Spain	Europe	7596	True
+Sudan	Africa	3	False
+Sweden	Europe	86	False
+Switzerland	Europe	3836	False
+Taiwan	Asia	5	False
+Tanzania	Africa	1	False
+Thailand	Asia	9	False
+Tunisia	Africa	14	False
+Turkey	Asia	395	True
+Turkmenistan	Asia	1	False
+Uganda	Africa	27	False
+Ukraine	Europe	345	False
+United Kingdom	Europe	426	False
+United States	North America	58120	True
+Uruguay	South America	13	False
+Uzbekistan	Asia	11	False
+Venezuela	South America	2	False
+Zambia	Africa	142	False
+Zimbabwe	Africa	70	False
