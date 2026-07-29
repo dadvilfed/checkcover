@@ -113,10 +113,12 @@ under `spatial_data/`:
 | Natural Earth | via `rnaturalearth` | continents, admin-0 fallback |
 | TEOW | WWF | terrestrial ecoregions |
 
-Two small lookups ship with the repo:
-`WoC_canonical_country_continent.tsv` (canonical geographic vocabulary) and
-`ecoregions_list.tsv`. The HydroBASINS name table (`Table_S3.tsv`, 39 MB) is
-distributed with the paper's supplementary material.
+Offline lookups ship with the repo: `WoC_canonical_country_continent.tsv`
+(canonical geographic vocabulary), `Table_S3.tsv` (HydroBASINS names, 39 MB),
+`(Table_S4)ecoregions_list.tsv` (freshwater ecoregion names) and
+`(Table_S2)vernacular_names_wide.tsv` (curated common names). The last two also
+serve as manuscript supplements, hence the prefixed filenames — set
+`CONFIG$dictionaries$feow` and `CONFIG$vernaculars$path` to match them.
 
 ---
 
@@ -172,12 +174,11 @@ the consumer-facing record of what lives where.
 
 ## Verification
 
-Three independent gates, all runnable standalone:
+Two gates ship with the repository, both runnable standalone:
 
 ```bash
 Rscript tests/run_all.R                              # unit + regression suite
 Rscript tests/audit_packages.R checkover_output/1.0  # per-package integrity
-Rscript verify_geo_acceptance.R checkover_output/1.0 # geographic acceptance
 ```
 
 **`tests/run_all.R`** — 14 files covering the classifier, extinction handling,
@@ -189,13 +190,11 @@ artifacts exist and are non-empty, and that every headline number in the
 narrative equals the corresponding field in `package_metadata.json`. Exits
 non-zero on any mismatch. Run it before publishing anything.
 
-**`verify_geo_acceptance.R`** — checks that no emitted geography falls outside
-the canonical vocabulary, that no species is classified on unresolved or
-snapped values, and reports native / fallback / unresolved counts per field.
-
-Extraction helpers for reporting: `extract_manuscript_summaries.R` and
-`extract_manuscript_tables.R` produce aggregate summary tables (counts only, no
-coordinates) as `.md`, `.json` and `.tsv`.
+A third check runs inside the pipeline itself: Module 2C writes
+`geographic_integrity.{json,tsv}` to the run directory each run, recording how
+many records took their geography from the source database, how many were
+derived from coordinates, and how many could not be resolved — broken down by
+species, so gaps surface in the log immediately rather than in a later figure.
 
 ---
 
