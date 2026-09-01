@@ -243,3 +243,95 @@ sanitize_spatial_layer <- function(x,
 
   x
 }
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# RING-LEVEL ANTIMERIDIAN NORMALIZATION (export-time guard)
+#
+# sanitize_spatial_layer() above protects the SPATIAL JOIN by splitting
+# dateline-crossing features (st_wrap_dateline). This function protects the
+# EXPORTED GEOMETRY, which is a different failure and needs a different fix.
+#
+# The bug (Lucian, 2026-08, Cherax destructor): HydroBASINS polygon 5060081550
+# (Fiji) has rings with vertices on both sides of 180 in raw form, e.g.
+# -179.9994 immediately followed by +180.0. Every web renderer -- Leaflet,
+# Mapbox, OpenLayers -- joins consecutive vertices along the SHORT path in
+# planar lon/lat space, so that pair draws a segment straight across the whole
+# world. On the species page it showed up as a horizontal line at ~16S.
+#
+# Fix: per ring, if the longitude span exceeds 180 degrees the ring must be
+# crossing the dateline (no HydroBASINS basin at L6/L8/L10 is genuinely that
+# wide), so shift its negative longitudes by +360. The ring then stays
+# continuous through 180 and renders as one shape.
+#
+# Trade-off, stated deliberately: this emits longitudes above 180, which RFC
+# 7946 section 3.1.9 does not sanction -- the spec-pure alternative is to SPLIT
+# the polygon at the antimeridian. Normalization is chosen because it is what
+# was already applied to the deployed copies, and because it preserves feature
+# count and ring structure exactly, so a regenerated file differs from the
+# patched one in nothing but the affected coordinates. Splitting would change
+# the feature count and break that correspondence.
+#
+# Must run AFTER all spatial operations (st_intersects and friends would not
+# match points at -179.99 against a ring shifted to +180.0006) and immediately
+# before writing. It is applied to raw and styled alike so GeoJSON and KML
+# carry identical geometry.
+# ────────────────────────────────────────────────────────────────────────────
+
+#' Normalize rings that cross the antimeridian
+#'
+#' @param x An sf/sfc object in geographic coordinates. Anything else, or
+#'   empty input, is returned untouched.
+#' @param layer_name Short identifier for log messages.
+#' @param module Logging module name.
+#' @return `x` with dateline-crossing rings made continuous, plus attribute
+#'   "n_rings_normalized" recording how many rings were shifted.
+normalize_antimeridian_rings <- function(x,
+                                         layer_name = "<unnamed>",
+                                         module = "SPATIAL_SANITIZE") {
+  if (is.null(x)) return(x)
+  n_feat <- if (inherits(x, "sf")) nrow(x) else length(x)
+  if (n_feat == 0L) return(x)
+
+  n_fixed <- 0L
+
+  # One ring = one coordinate matrix, cols [lon, lat].
+  fix_ring <- function(m) {
+    if (!is.matrix(m) || nrow(m) == 0L || ncol(m) < 2L) return(m)
+    lon <- m[, 1]
+    if (anyNA(lon) || !all(is.finite(lon))) return(m)
+    if ((max(lon) - min(lon)) <= 180) return(m)
+    neg <- lon < 0
+    if (!any(neg)) return(m)          # spans >180 without negatives: leave alone
+    m[neg, 1] <- lon[neg] + 360
+    n_fixed <<- n_fixed + 1L
+    m
+  }
+
+  # POLYGON is list(matrix); MULTIPOLYGON is list(list(matrix)). Recursing on
+  # structure rather than branching on class keeps this correct for both, and
+  # for any nesting depth sf might hand back.
+  walk <- function(z) if (is.matrix(z)) fix_ring(z) else lapply(z, walk)
+
+  geom <- sf::st_geometry(x)
+  crs  <- sf::st_crs(geom)
+
+  out <- lapply(seq_along(geom), function(i) {
+    g   <- geom[[i]]
+    cls <- class(g)[2]
+    if (!cls %in% c("POLYGON", "MULTIPOLYGON")) return(g)
+    parts <- walk(unclass(g))
+    if (cls == "POLYGON") sf::st_polygon(parts) else sf::st_multipolygon(parts)
+  })
+
+  if (n_fixed > 0L) {
+    sf::st_geometry(x) <- sf::st_sfc(out, crs = crs)
+    if (exists("log_info", mode = "function")) {
+      log_info("  [ANTIMERIDIAN] %s: normalized %d dateline-crossing ring(s)",
+               layer_name, n_fixed, module = module)
+    }
+  }
+
+  attr(x, "n_rings_normalized") <- n_fixed
+  x
+}

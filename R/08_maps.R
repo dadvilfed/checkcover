@@ -506,6 +506,28 @@ generate_all_maps <- function(scenario_table,
     all_basins$status[is.na(all_basins$status)] <- "Native"
   }
   
+  # ── Step 4b: Attach basin names (Lucian, 2026-08) ──
+  # Resolved by the SAME function the narratives use, so the string on a feature
+  # is by construction the string the narrative prints for that basin (Lucian,
+  # 2026-08). v1.2 wrote the coarse Basin_name here instead, which collapsed all
+  # 21 Austropotamobius bihariensis basins to "Danube" while the narrative named
+  # 11 of them — and left 357 of 676 species with a single distinct name across
+  # every basin they occupy. See resolve_basin_names() in 00_helpers.R.
+  bn <- resolve_basin_map_names(all_basins$HB_LABEL)
+  all_basins$basin_name <- bn$names
+
+  log_info("  [BASINS] Basin names: %d named, %d unnamed",
+           bn$n_named, bn$n_unnamed, module = module)
+  if (bn$n_unmatched > 0L) {
+    # Should not happen — 9,051/9,051 resolve on the WoC side. If it does, the
+    # feature still gets a valid "unnamed" rather than a missing property.
+    log_warn("  [BASINS] %d HB_LABEL(s) absent from the name lookup — wrote 'unnamed'",
+             bn$n_unmatched, module = module)
+  }
+
+  # basin_name sits beside the id it names; sf keeps geometry last regardless.
+  all_basins <- all_basins[, c("HB_LABEL", "basin_name", "status"), drop = FALSE]
+
   # ── Step 5: Apply styling ──
   styled_basins <- all_basins
   styled_basins$fill <- dplyr::case_when(
@@ -523,6 +545,23 @@ generate_all_maps <- function(scenario_table,
            sum(all_basins$status == "Introduced", na.rm = TRUE),
            module = module)
   
+  # ── Step 6: Antimeridian guard, immediately before the geometry leaves ──
+  # Last step on purpose: shifting negative longitudes by +360 would break any
+  # st_intersects() against points still at -179.99, so every spatial op above
+  # must already be finished.
+  #
+  # This lands in the GEOJSON, which is where the reported bug was (Leaflet on
+  # the species page). It does NOT survive into the KML: GDAL's KML driver
+  # clamps out-of-range longitudes back into [-180,180] on write ("Longitude
+  # 180.000643 has been modified to fit into range"), so the KML keeps the raw
+  # dateline-crossing geometry no matter what we hand it. That is the status
+  # quo and Google Earth renders it correctly (Lucian, 2026-08: "the KMLs carry
+  # the same raw geometry but Google Earth tolerates it — lower priority").
+  # The call is kept on `raw` anyway so both objects stay consistent in memory
+  # and the KML corrects itself if the driver ever stops clamping.
+  all_basins    <- normalize_antimeridian_rings(all_basins,    layer_name = sp, module = module)
+  styled_basins <- normalize_antimeridian_rings(styled_basins, layer_name = sp, module = module)
+
   return(list(
     raw = all_basins,
     styled = styled_basins
@@ -609,9 +648,58 @@ generate_all_maps <- function(scenario_table,
     "\\1<styleUrl>#mixedStyle</styleUrl>\\2",
     kml_txt
   )
-  
+
+  # Basin name as each Placemark's <name> (Lucian, 2026-08). GDAL's KML driver
+  # routes every attribute into ExtendedData and never emits <name>, so the
+  # element has to be inserted here. basin_name stays in ExtendedData too, which
+  # keeps the KML's property set identical to the GeoJSON's.
+  # Runs last so it cannot disturb the style substitutions above.
+  if ("basin_name" %in% names(basins_sf)) {
+    kml_txt <- .kml_insert_placemark_names(kml_txt, as.character(basins_sf$basin_name))
+  }
+
   writeLines(kml_txt, file_path)
   unlink(tmp)
+}
+
+
+# --- HELPER: INSERT <name> INTO EACH PLACEMARK ---
+# Positional insertion is safe because the KML driver emits Placemarks in
+# feature order, so the i-th Placemark is the i-th row of the sf object.
+.kml_insert_placemark_names <- function(kml_txt, names_vec) {
+  # Match the OPEN TAG, not a literal "<Placemark>": GDAL emits a bare
+  # <Placemark> for some layers and <Placemark id="layer.1"> for others
+  # (it depends on whether the layer carries an FID). Splitting on the literal
+  # silently found zero placemarks on the id-bearing form.
+  m <- gregexpr("<Placemark[^>]*>", kml_txt, perl = TRUE)[[1]]
+  if (m[1] == -1L || length(names_vec) == 0L) return(kml_txt)
+
+  starts <- as.integer(m)
+  ends   <- starts + attr(m, "match.length") - 1L
+  n_pm   <- length(starts)
+
+  esc <- function(s) {
+    s <- gsub("&", "&amp;", s, fixed = TRUE)
+    s <- gsub("<", "&lt;",  s, fixed = TRUE)
+    gsub(">", "&gt;", s, fixed = TRUE)
+  }
+
+  # Guard against any drift between placemark count and row count: name what
+  # can be matched one-to-one, leave the rest untouched rather than misalign.
+  k <- min(n_pm, length(names_vec))
+
+  # Insert back-to-front so earlier offsets stay valid as the string grows.
+  for (i in rev(seq_len(k))) {
+    nm <- names_vec[i]
+    if (is.na(nm) || !nzchar(nm)) nm <- "unnamed"
+    kml_txt <- paste0(
+      substr(kml_txt, 1L, ends[i]),
+      "\n\t<name>", esc(nm), "</name>",
+      substr(kml_txt, ends[i] + 1L, nchar(kml_txt))
+    )
+  }
+
+  kml_txt
 }
 
 # Aliases so both call styles work
