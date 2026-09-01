@@ -368,28 +368,14 @@ generate_indigenous_reports <- function(result_indigenous,
 # Resolve a vector of raw hydrobasin codes to basin names
 # Input format: "L10:2100522290"
 # Table columns: Basin_level | HYBAS_ID | Basin_name | Subbasin_name
+# Delegates to the ONE canonical resolver in 00_helpers.R (Lucian, 2026-08).
+# This implementation used to bail out and return the RAW CODES whenever the
+# lookup's column names arrived in an unexpected case. Distinct raw codes ==
+# distinct units, so n_named_basins silently collapsed to n_hydrobasins and
+# the narrative summary quoted "424 named river basins" for a species with 13.
 .resolve_basin_3c <- function(x, hb_lookup) {
-  if (is.null(hb_lookup) || length(x) == 0) return(x)
-  req <- c("Basin_level", "HYBAS_ID", "Basin_name", "Subbasin_name")
-  if (!all(req %in% names(hb_lookup))) return(x)
-  hb_lookup$lookup_key <- paste0(hb_lookup$Basin_level, ":", hb_lookup$HYBAS_ID)
-  
-  vapply(x, function(code) {
-    if (is.na(code) || !nzchar(code)) return(code)
-    idx <- match(code, hb_lookup$lookup_key)
-    if (is.na(idx)) {
-      id_only <- sub("^L\\d+:", "", code)
-      idx     <- match(id_only, as.character(hb_lookup$HYBAS_ID))
-    }
-    if (is.na(idx)) return(code)
-    # Finest available name (river-aware): Basin > Subbasin > river_name.
-    basin_display_name(
-      hb_lookup$Basin_name[idx],
-      hb_lookup$Subbasin_name[idx],
-      if ("river_name" %in% names(hb_lookup)) hb_lookup$river_name[idx] else NA_character_,
-      fallback = code
-    )
-  }, character(1), USE.NAMES = FALSE)
+  if (length(x) == 0) return(x)
+  resolve_basin_names(x, hb_lookup, fallback = "unnamed")$names
 }
 
 .build_frag_block_3c <- function(sp, frag_df) {

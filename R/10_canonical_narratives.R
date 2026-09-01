@@ -433,45 +433,15 @@ generate_canonical_narratives <- function(scenario_table,
   .resolve_basin_col(codes, hb_lookup)
 }
 
+# Delegates to the ONE canonical resolver in 00_helpers.R (Lucian, 2026-08).
+# Previously this and .resolve_basin_3c() in the report module were separate
+# implementations that disagreed: this one had a case-insensitive rescue for
+# the lookup's column names, that one did not and silently returned raw codes.
+# Distinct raw codes == distinct units, which is why the summary sentence
+# quoted the unit count as the name count for 483 of 676 species.
 .resolve_basin_col <- function(x, hb_lookup) {
-  if (is.null(hb_lookup) || length(x) == 0) return(x)
-  
-  # Ensure required columns exist
-  req_cols <- c("Basin_level", "HYBAS_ID", "Basin_name", "Subbasin_name")
-  if (!all(req_cols %in% names(hb_lookup))) {
-    # Try case-insensitive match
-    names(hb_lookup) <- sub("^basin_level$",  "Basin_level",  names(hb_lookup), ignore.case = TRUE)
-    names(hb_lookup) <- sub("^hybas_id$",     "HYBAS_ID",     names(hb_lookup), ignore.case = TRUE)
-    names(hb_lookup) <- sub("^basin_name$",   "Basin_name",   names(hb_lookup), ignore.case = TRUE)
-    names(hb_lookup) <- sub("^subbasin_name$","Subbasin_name",names(hb_lookup), ignore.case = TRUE)
-    if (!all(req_cols %in% names(hb_lookup))) return(x)
-  }
-  
-  # Build a composite lookup key: "L10:2100522290"
-  hb_lookup$lookup_key <- paste0(hb_lookup$Basin_level, ":", hb_lookup$HYBAS_ID)
-  has_river <- "river_name" %in% names(hb_lookup)
-
-  vapply(x, function(code) {
-    if (is.na(code) || !nzchar(code)) return(code)
-
-    idx <- match(code, hb_lookup$lookup_key)
-
-    if (is.na(idx)) {
-      # Fallback: try matching on HYBAS_ID alone (strip "Lxx:" prefix)
-      id_only <- sub("^L\\d+:", "", code)
-      idx     <- match(id_only, as.character(hb_lookup$HYBAS_ID))
-    }
-
-    if (is.na(idx)) return(code)   # Give up, return raw code
-
-    # Finest available name (river-aware): Basin > Subbasin > river_name.
-    basin_display_name(
-      hb_lookup$Basin_name[idx],
-      hb_lookup$Subbasin_name[idx],
-      if (has_river) hb_lookup$river_name[idx] else NA_character_,
-      fallback = code
-    )
-  }, character(1), USE.NAMES = FALSE)
+  if (length(x) == 0) return(x)
+  resolve_basin_names(x, hb_lookup, fallback = "unnamed")$names
 }
 
 
@@ -898,8 +868,8 @@ generate_canonical_narratives <- function(scenario_table,
   if (n_named > 0) {
     basin_str <- paste(paste0(basin_ft$value, " (n=", basin_ft$n, ")"), collapse = "; ")
     lines <- c(lines,
-               paste0("- **Named river basins (native):** ", basin_str),
-               paste0("  - Named basins: ", n_named, "  |  HydroBASINS units: ", n_units),
+               paste0("- **Hydrographic basins (native):** ", basin_str),
+               paste0("  - Distinct names: ", n_named, "  |  HydroBASINS units: ", n_units),
                "")
   }
   
@@ -1130,13 +1100,21 @@ generate_canonical_narratives <- function(scenario_table,
                "")
   }
   
-  # Hydrographic basins — resolved, deduplicated count
+  # Hydrographic basins — resolved, deduplicated.
+  # Reports BOTH numbers, in the same shape and wording as the native block
+  # (Lucian, 2026-08): this side used to print a bare "Count: 9" that never
+  # said whether it counted names or units, and never stated the unit count
+  # at all. Distinct names and HydroBASINS units are different quantities and
+  # each is now labelled for what it is.
   basin_ft <- .freq_table(basin_col)
   if (nrow(basin_ft) > 0) {
     basin_str <- paste(paste0(basin_ft$value, " (n=", basin_ft$n, ")"), collapse = "; ")
+    n_named_ni <- nrow(basin_ft)
+    n_units_ni <- nind_report$counts$n_hydrobasins %||% n_named_ni
     lines <- c(lines,
                paste0("- **Hydrographic basins:** ", basin_str),
-               paste0("  - Count: ", nrow(basin_ft)),
+               paste0("  - Distinct names: ", n_named_ni,
+                      "  |  HydroBASINS units: ", n_units_ni),
                "")
   }
   
@@ -1580,23 +1558,30 @@ generate_canonical_narratives <- function(scenario_table,
   rs        <- .recent_stats(sp_ind, ind_report)
   
   # --- Build sentence components ---
-  # Basin phrase names the RIVER basins (river-aware) and states the fine unit
-  # count separately, e.g.:
-  #   "**30 named river basins**, including Tisza - Crișul Alb, ...
-  #    (across 1,053 hydrographic basin units)"
+  # Basin phrase quotes the NAME count and states the fine unit count
+  # separately, e.g.:
+  #   "**11 hydrographic basins**, including Tisza - Crișul Alb, ...
+  #    (across 21 HydroBASINS units)"
+  #
+  # The bolded figure is n_named, never n_units. It read n_units for 483 of 676
+  # species — "424 named river basins ... across 424 units" for a species with
+  # 13 names — because n_named_basins in the report had silently collapsed to
+  # the unit count (see resolve_basin_names() in 00_helpers.R). The two now come
+  # from one resolver, and the suffix says "HydroBASINS units" so the sentence
+  # does not say "hydrographic basin" twice (Lucian, 2026-08).
   units_suffix <- if (!is.na(n_units))
-    paste0(" (across ", format(n_units, big.mark = ","), " hydrographic basin unit",
+    paste0(" (across ", format(n_units, big.mark = ","), " HydroBASINS unit",
            if (n_units != 1) "s" else "", ")")
   else ""
   basin_phrase <- if (length(top_basins) > 0) {
     incl_suffix <- if (!is.na(n_named) && n_named > length(top_basins))
       paste0(", including ", paste(top_basins, collapse = ", "))
     else ""
-    paste0("**", n_named, " named river basin",
+    paste0("**", n_named, " hydrographic basin",
            if (!is.na(n_named) && n_named != 1) "s" else "",
            "**", incl_suffix, units_suffix)
   } else if (!is.na(n_units)) {
-    paste0(format(n_units, big.mark = ","), " hydrographic basin unit",
+    paste0(format(n_units, big.mark = ","), " HydroBASINS unit",
            if (n_units != 1) "s" else "")
   } else "an undetermined number of hydrographic basins"
   

@@ -341,28 +341,14 @@ generate_non_indigenous_reports <- function(result_non_indigenous,
   x
 }
 
+# Delegates to the ONE canonical resolver in 00_helpers.R (Lucian, 2026-08).
+# NB this file used to carry a SECOND full copy of .resolve_basin_3c(). Because
+# 04c is sourced after 03c, that copy silently overwrote the indigenous one, so
+# both branches ran whichever definition happened to load last. One resolver
+# now, in one place.
 .resolve_basin_3c <- function(x, hb_lookup) {
-  if (is.null(hb_lookup) || length(x) == 0) return(x)
-  req <- c("Basin_level", "HYBAS_ID", "Basin_name", "Subbasin_name")
-  if (!all(req %in% names(hb_lookup))) return(x)
-  hb_lookup$lookup_key <- paste0(hb_lookup$Basin_level, ":", hb_lookup$HYBAS_ID)
-  
-  vapply(x, function(code) {
-    if (is.na(code) || !nzchar(code)) return(code)
-    idx <- match(code, hb_lookup$lookup_key)
-    if (is.na(idx)) {
-      id_only <- sub("^L\\d+:", "", code)
-      idx     <- match(id_only, as.character(hb_lookup$HYBAS_ID))
-    }
-    if (is.na(idx)) return(code)
-    # Finest available name (river-aware): Basin > Subbasin > river_name.
-    basin_display_name(
-      hb_lookup$Basin_name[idx],
-      hb_lookup$Subbasin_name[idx],
-      if ("river_name" %in% names(hb_lookup)) hb_lookup$river_name[idx] else NA_character_,
-      fallback = code
-    )
-  }, character(1), USE.NAMES = FALSE)
+  if (length(x) == 0) return(x)
+  resolve_basin_names(x, hb_lookup, fallback = "unnamed")$names
 }
 
 # NULL coalescing (safe re-definition)

@@ -36,15 +36,26 @@ river_ok <- ("river_name" %in% names(hb)) &&
         !all(resolved == "Danube - Tisza")                # not the coarse collapse
 
 # A record occupying >1 basin is stored pipe-joined. Such a cell matches no
-# lookup key, so unsplit resolution leaves a raw "L10:a | L10:b" string that
-# inflates the distinct basin-name count above what the narrative lists.
+# lookup key, so it must be split before resolution or the whole composite
+# resolves as a single unmatched value.
+#
+# The observable signal changed in 2026-08: the resolvers were unified into
+# resolve_basin_names(), which returns "unnamed" for an unmatched code instead
+# of echoing the raw "L10:..." string back. That is deliberate — the geojson and
+# the narrative must print the same string for a basin, and Lucian's rule is
+# that unnamed IS a name. The assertion below tests the same property through
+# the new signal.
 ids   <- head(unique(tisza$HYBAS_ID), 4)
 cells <- c(paste0("L10:", ids[1]),
            paste0("L10:", ids[2], " | L10:", ids[3]),   # multi-basin record
            paste0("L10:", ids[4]))
-old_way <- .resolve_basin_col(cells, hb)     # unsplit: composite survives raw
+old_way <- .resolve_basin_col(cells, hb)     # unsplit: composite matches nothing
 new_way <- .resolve_basin_cells(cells, hb)   # split: every unit resolves
-split_ok <- any(grepl("^L10:", old_way)) && !any(grepl("^L10:", new_way))
+# Every code in `cells` has a river_name, so a real "unnamed" cannot appear here
+# — any "unnamed" is a resolution failure, which is exactly what we want to see
+# on the unsplit path and never on the split one.
+split_ok <- any(old_way == "unnamed") && !any(new_way == "unnamed") &&
+            !any(grepl("^L10:", new_way))
 
 pass <- river_ok && split_ok
 cat("[test_basin_resolution] sample:", paste(head(unique(resolved), 4), collapse = " | "), "\n")

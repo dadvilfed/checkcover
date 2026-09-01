@@ -94,6 +94,127 @@ basin_display_name <- function(basin, subbasin, river, fallback = NA_character_)
   if (length(comps) >= 2L) paste(utils::tail(comps, 2L), collapse = " - ") else comps[1]
 }
 
+#' Canonical HydroBASINS code -> display-name resolution.
+#'
+#' ONE resolver, used by the narratives, the per-species reports AND the map
+#' exports. Before 2026-08 there were three: .resolve_basin_col() in the
+#' narrative module, .resolve_basin_3c() in the report module, and a coarse
+#' Basin_name-only lookup in the maps. They disagreed, and that produced two
+#' of the four defects Lucian reported:
+#'
+#'   * the geojson said "Danube" for all 21 Austropotamobius bihariensis
+#'     basins while the narrative said "Tisza - Crisul Alb" etc. (11 names);
+#'   * .resolve_basin_3c() had no case-insensitive rescue for the lookup's
+#'     column names, so when they arrived in another case it silently returned
+#'     the RAW CODES. Distinct raw codes == distinct units, so n_named_basins
+#'     collapsed to n_hydrobasins and the summary sentence quoted the unit
+#'     count as if it were the name count (483 of 676 species).
+#'
+#' Everything now delegates here, so the string on a geojson feature is by
+#' construction the string the narrative prints for that basin.
+#'
+#' Accepts codes as bare ids ("2100513510") or level-prefixed ("L10:2100513510").
+#' HYBAS_ID is globally unique across L6/L8/L10 (1,148,084 distinct ids in
+#' 1,148,084 rows), so the bare id alone is an unambiguous key.
+
+.HB_LOOKUP_CACHE <- new.env(parent = emptyenv())
+
+#' Normalise a Table_S3-style lookup to canonical column names.
+#' Case-insensitive on input: the rescue that .resolve_basin_3c() lacked.
+.hb_normalise_lookup <- function(hb_lookup) {
+  if (is.null(hb_lookup) || !is.data.frame(hb_lookup) || nrow(hb_lookup) == 0L) return(NULL)
+  canon <- c(basin_level = "Basin_level", hybas_id = "HYBAS_ID",
+             basin_name = "Basin_name", subbasin_name = "Subbasin_name",
+             river_name = "river_name")
+  nm  <- names(hb_lookup)
+  key <- tolower(trimws(nm))
+  for (i in seq_along(nm)) if (!is.na(canon[key[i]])) nm[i] <- unname(canon[key[i]])
+  names(hb_lookup) <- nm
+
+  if (!all(c("HYBAS_ID", "Basin_name") %in% names(hb_lookup))) return(NULL)
+  for (col in c("Subbasin_name", "river_name")) {
+    if (!col %in% names(hb_lookup)) hb_lookup[[col]] <- NA_character_
+  }
+  hb_lookup$HYBAS_ID <- as.character(hb_lookup$HYBAS_ID)
+  hb_lookup
+}
+
+#' Memoised lookup index. Stores the normalised frame plus its id vector; the
+#' name cascade itself runs only on the codes actually requested, so loading
+#' the 1.15M-row table costs one normalise, not 1.15M cascades.
+.hb_index <- function(hb_lookup = NULL) {
+  if (!is.null(.HB_LOOKUP_CACHE$hb)) return(.HB_LOOKUP_CACHE)
+  if (is.null(hb_lookup) && exists("HYDROBASIN_NAMES", envir = globalenv())) {
+    hb_lookup <- get("HYDROBASIN_NAMES", envir = globalenv())
+  }
+  hb <- .hb_normalise_lookup(hb_lookup)
+  if (is.null(hb)) return(NULL)
+  .HB_LOOKUP_CACHE$hb  <- hb
+  .HB_LOOKUP_CACHE$ids <- hb$HYBAS_ID
+  .HB_LOOKUP_CACHE
+}
+
+#' Reset the memo. Tests only — the lookup is fixed for the life of a run.
+.hb_index_reset <- function() {
+  rm(list = ls(.HB_LOOKUP_CACHE), envir = .HB_LOOKUP_CACHE)
+  invisible(NULL)
+}
+
+#' Resolve HydroBASINS codes to display names.
+#'
+#' @param codes Character vector, bare or "Lxx:"-prefixed.
+#' @param hb_lookup Table_S3 frame, or NULL for the HYDROBASIN_NAMES global.
+#' @param fallback Value for a code absent from the lookup. "unnamed" keeps
+#'   every output a usable string (Lucian's rule: unnamed IS a name). Pass
+#'   NA to have unresolved codes returned verbatim instead.
+#' @return list(names, n_named, n_unnamed, n_unmatched).
+resolve_basin_names <- function(codes, hb_lookup = NULL, fallback = "unnamed") {
+  codes <- as.character(codes)
+  ids   <- sub("^L[0-9]+:", "", codes)
+  out   <- rep(NA_character_, length(codes))
+
+  ix <- .hb_index(hb_lookup)
+  if (is.null(ix)) {
+    out[] <- if (is.na(fallback)) codes else fallback
+    return(list(names = out, n_named = 0L, n_unnamed = length(out),
+                n_unmatched = length(out)))
+  }
+
+  j     <- match(ids, ix$ids)
+  found <- !is.na(j)
+
+  if (any(found)) {
+    hb <- ix$hb
+    jj <- j[found]
+    blank <- function(x) { x <- as.character(x); x[!is.na(x) & !nzchar(trimws(x))] <- NA_character_; x }
+    b <- blank(hb$Basin_name[jj]); s <- blank(hb$Subbasin_name[jj]); r <- blank(hb$river_name[jj])
+    # Finest available label, river-aware: Basin > Subbasin > river. Two finest
+    # distinct components, exactly as basin_display_name() has always done for
+    # the narratives -- level-10 endemics must show the RIVER, not collapse to
+    # the coarse basin (Lucian, 2026-07).
+    out[found] <- vapply(seq_along(jj), function(k)
+      basin_display_name(b[k], s[k], r[k], fallback = NA_character_),
+      character(1))
+  }
+
+  # A row whose components are all blank resolves to nothing -> "unnamed",
+  # which is also the literal Basin_name for 59,703 rows of the source table.
+  unresolved <- is.na(out)
+  out[unresolved] <- if (is.na(fallback)) codes[unresolved] else fallback
+
+  list(
+    names       = out,
+    n_named     = sum(!is.na(out) & out != "unnamed"),
+    n_unnamed   = sum(out == "unnamed", na.rm = TRUE),
+    n_unmatched = sum(!found)
+  )
+}
+
+#' Map-export wrapper. Kept as its own name because 08_maps.R reports the
+#' named/unnamed split in its log line.
+resolve_basin_map_names <- function(ids, hb_lookup = NULL) {
+  resolve_basin_names(ids, hb_lookup, fallback = "unnamed")
+}
 #' Is a species in the zero-active (total-extinction) terminal state?
 #'
 #' TRUE when the active (post-suppression, non-extinct) record count is 0 while
