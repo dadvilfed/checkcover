@@ -219,15 +219,42 @@ generate_all_citations <- function(scenario_table,
       # ── Count + dedup for published ──
       if (nrow(pub_rows) > 0) {
         pub_rows$dedup_key <- pub_rows$citation_clean
-        
-        count_tbl <- as.data.frame(table(pub_rows$dedup_key), stringsAsFactors = FALSE)
-        names(count_tbl) <- c("dedup_key", "count")
-        
+
+        # table() drops NA by default, so a species whose published citations
+        # are ALL NA yields a 0-level table — and as.data.frame() of a 0-level
+        # table collapses to a SINGLE "Freq" column, so naming two columns died
+        # with:
+        #   'names' attribute [2] must be the same length as the vector [1]
+        # Hit on Cherax cartalacoolah (2026-08) once force_reprocess put the
+        # whole cohort through this module; the 501 previously-"unchanged"
+        # species had never reached it. Nothing about the data was new — the
+        # code path simply had not been exercised.
+        #
+        # Build the frame explicitly so its shape cannot depend on the data.
+        # Rows with an NA citation still fall through the merge below with
+        # count = NA, which is exactly how species with a MIX of NA and real
+        # citations already behave in v1.0/v1.1 (13 such species in v1.1). So
+        # no species that worked before changes output.
+        key_tab   <- table(pub_rows$dedup_key, useNA = "no")
+        count_tbl <- data.frame(
+          dedup_key = if (length(key_tab)) names(key_tab)      else character(0),
+          count     = if (length(key_tab)) as.integer(key_tab) else integer(0),
+          stringsAsFactors = FALSE
+        )
+
+        if (nrow(count_tbl) == 0L) {
+          # Visible rather than silent: the species will still get a reference
+          # entry, but with a NULL citation and NULL count.
+          log_warn(paste0("  %s: no usable citation on any of %d published record(s) — ",
+                          "reference emitted with count=NA"),
+                   sp, nrow(pub_rows), module = module)
+        }
+
         source_types_map <- tapply(
           pub_rows$source_type, pub_rows$dedup_key,
           function(x) sort(unique(x)), simplify = FALSE
         )
-        
+
         pub_dedup <- pub_rows[!duplicated(pub_rows$dedup_key), , drop = FALSE]
         pub_dedup <- merge(pub_dedup, count_tbl, by = "dedup_key", all.x = TRUE)
         pub_dedup$source_types <- source_types_map[pub_dedup$dedup_key]

@@ -654,15 +654,30 @@ calculate_range_delta <- function(current,
   EOO_prev <- previous_metrics$EOO_km2
   AOO_prev <- previous_metrics$AOO_km2
   
+  # A metric is unusable if it is absent, empty, or NA. NULL is the case that
+  # bit us: a previous snapshot whose EOO_km2 was undefined (species with <3
+  # records) serialises to JSON null and reads back as NULL, not NA. Then
+  # is.na(NULL) is logical(0), and `FALSE || logical(0)` evaluates to NA — so
+  # `if (...)` died with "missing value where TRUE/FALSE needed" (Cherax
+  # longipes, lorentzi, misolicus, solus; 2026-08).
+  #
+  # Note the asymmetry that hid this: pct() below already guarded is.null(),
+  # so the *_change_percent path was fine and only *_change_absolute crashed.
+  # Species whose previous EOO was a real NA (e.g. Cherax pallidus) never
+  # tripped it, because is.na(NA) short-circuits the || before the second
+  # operand is reached. Length != 1 is treated as unusable too, so a malformed
+  # multi-value metric degrades to NA instead of silently using its first element.
+  .missing_num <- function(x) is.null(x) || length(x) != 1L || is.na(x)
+
   pct <- function(curr, prev) {
-    if (is.null(prev) || is.na(prev) || prev == 0) return(NA_real_)
+    if (.missing_num(prev) || .missing_num(curr) || prev == 0) return(NA_real_)
     round(((curr - prev) / prev) * 100, 1)
   }
   
   EOO_pct <- pct(EOO_curr, EOO_prev)
   AOO_pct <- pct(AOO_curr, AOO_prev)
   
-  signal <- if (is.na(EOO_pct) && is.na(AOO_pct)) {
+  signal <- if (.missing_num(EOO_pct) && .missing_num(AOO_pct)) {
     "unknown"
   } else {
     pcts <- c(EOO_pct, AOO_pct)
@@ -676,11 +691,11 @@ calculate_range_delta <- function(current,
   list(
     EOO_previous_km2    = EOO_prev,
     EOO_current_km2     = EOO_curr,
-    EOO_change_absolute = if (is.na(EOO_prev) || is.na(EOO_curr)) NA_real_ else round(EOO_curr - EOO_prev, 1),
+    EOO_change_absolute = if (.missing_num(EOO_prev) || .missing_num(EOO_curr)) NA_real_ else round(EOO_curr - EOO_prev, 1),
     EOO_change_percent  = EOO_pct,
     AOO_previous_km2    = AOO_prev,
     AOO_current_km2     = AOO_curr,
-    AOO_change_absolute = if (is.na(AOO_prev) || is.na(AOO_curr)) NA_real_ else round(AOO_curr - AOO_prev, 1),
+    AOO_change_absolute = if (.missing_num(AOO_prev) || .missing_num(AOO_curr)) NA_real_ else round(AOO_curr - AOO_prev, 1),
     AOO_change_percent  = AOO_pct,
     range_signal        = signal
   )
