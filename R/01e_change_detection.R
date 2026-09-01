@@ -120,6 +120,62 @@ if (!exists("%||%", mode = "function")) {
 # PHASE 1.5 ORCHESTRATOR
 # ──────────────────────────────────────────────────────────────────────────────
 
+#' Resolve the force_reprocess setting into an explicit plan
+#'
+#' Accepts FALSE/NULL (no override), TRUE (force every species), or a character
+#' vector of species to force. Vector entries may use either the display name
+#' ("Cherax destructor") or the package id ("Cherax_destructor") — people type
+#' both, and silently forcing nothing because of an underscore would be the
+#' worst possible failure here.
+#'
+#' Names that match no species in the cohort are reported loudly rather than
+#' ignored: a typo in this setting means the intended species quietly keeps its
+#' stale artifacts, which is precisely the bug the switch exists to prevent.
+#'
+#' @param force_reprocess  Raw config value.
+#' @param species_universe Character vector of species in this run.
+#' @return list(mode = "none"|"all"|"subset", species = character()).
+.resolve_force_spec <- function(force_reprocess, species_universe,
+                                module = "CHANGE_DETECTION") {
+  none <- list(mode = "none", species = character())
+
+  if (is.null(force_reprocess)) return(none)
+
+  if (is.logical(force_reprocess)) {
+    if (length(force_reprocess) != 1L || is.na(force_reprocess)) return(none)
+    if (!isTRUE(force_reprocess)) return(none)
+    return(list(mode = "all", species = character()))
+  }
+
+  if (!is.character(force_reprocess)) {
+    if (exists("log_warn", mode = "function")) {
+      log_warn(paste0("force_reprocess must be TRUE/FALSE or a character vector; ",
+                      "got %s — ignoring."), class(force_reprocess)[1], module = module)
+    }
+    return(none)
+  }
+
+  wanted <- unique(force_reprocess[!is.na(force_reprocess) & nzchar(force_reprocess)])
+  if (length(wanted) == 0L) return(none)
+
+  # Match on either spelling, and normalize to display names.
+  ids  <- vapply(species_universe, make_package_id, character(1), USE.NAMES = FALSE)
+  hit  <- wanted %in% species_universe | wanted %in% ids
+  resolved <- unique(c(
+    species_universe[species_universe %in% wanted],
+    species_universe[ids %in% wanted]
+  ))
+
+  if (any(!hit) && exists("log_warn", mode = "function")) {
+    log_warn("force_reprocess: %d name(s) match no species in this run and were ignored: %s",
+             sum(!hit), paste(wanted[!hit], collapse = ", "), module = module)
+  }
+  if (length(resolved) == 0L) return(none)
+
+  list(mode = "subset", species = resolved)
+}
+
+
 #' Phase 1.5: detect per-species outcomes and populate active_species
 #'
 #' Reads the just-ingested clean_occurrences.tsv from disk, computes a
@@ -202,7 +258,20 @@ detect_species_changes <- function(ctx, clean_data = NULL) {
   outcomes <- vector("list", length(species_universe))
   names(outcomes) <- species_universe
 
-  n_new <- 0L; n_unchanged <- 0L; n_reprocessed <- 0L
+  n_new <- 0L; n_unchanged <- 0L; n_reprocessed <- 0L; n_forced <- 0L
+
+  # ── Reprocessing override ──
+  force_spec <- .resolve_force_spec(ctx$force_reprocess %||% FALSE,
+                                    species_universe, module = module)
+  if (force_spec$mode != "none" && exists("log_warn", mode = "function")) {
+    log_warn(paste0(
+      "force_reprocess is ACTIVE (%s): fingerprint-identical species will be ",
+      "reprocessed anyway. Use this only for code-only changes; set it back to ",
+      "FALSE afterwards."),
+      if (force_spec$mode == "all") "all species"
+      else sprintf("%d species", length(force_spec$species)),
+      module = module)
+  }
 
   for (sp in species_universe) {
     sp_clean <- make_package_id(sp)
@@ -236,6 +305,29 @@ detect_species_changes <- function(ctx, clean_data = NULL) {
         change_summary    <- sprintf("data changed vs v%s",
                                      prior$source_version)
       }
+    }
+
+    # ── Forced reprocessing ──
+    # Only "unchanged" is overridden: "new" and "reprocessed" are already being
+    # computed, and forcing a first_run species would be meaningless.
+    #
+    # The outcome becomes "reprocessed", never "new". "new" would drop
+    # prior_source_version, and Modules 11-13 need it to compute the temporal
+    # delta against the prior version — a forced run must not cost us the delta.
+    # prior_source_v is therefore left exactly as the unchanged branch set it.
+    #
+    # change_summary records that this was FORCED. Without that, a v1.2 manifest
+    # showing 676 reprocessed species is indistinguishable from a genuine
+    # 676-species data change, and these fingerprint files are the audit anchor
+    # that ends up backing manuscript claims.
+    if (outcome == "unchanged" &&
+        (force_spec$mode == "all" ||
+         (force_spec$mode == "subset" && sp %in% force_spec$species))) {
+      outcome        <- "reprocessed"
+      source_version <- ctx$framework_version
+      change_summary <- sprintf("forced reprocess (data identical to v%s, %d records)",
+                                prior_source_v, n_records)
+      n_forced       <- n_forced + 1L
     }
 
     outcomes[[sp]] <- list(
@@ -278,6 +370,13 @@ detect_species_changes <- function(ctx, clean_data = NULL) {
       length(species_universe), n_new, n_reprocessed, n_unchanged,
       length(active_species)),
       module = module)
+    # Reported separately so the reprocessed count is never read as evidence of
+    # that many data changes.
+    if (n_forced > 0L) {
+      log_info(sprintf(
+        "  of which FORCED (data identical, reprocessed by override): %d",
+        n_forced), module = module)
+    }
   }
 
   validate_RunContext(ctx, expected_phase = "post_change_detection")

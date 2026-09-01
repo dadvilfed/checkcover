@@ -101,6 +101,14 @@ RunContext_init <- function(config, run_id, now = Sys.time()) {
     prior_versions          = list_prior_versions(config$root_output_dir,
                                                   current_version = fv),
 
+    # Reprocessing override (Lucian, 2026-08). Sparse versioning fingerprints
+    # the INPUT DATA, so a code-only change — a new output field, a geometry
+    # fix, a renamed key — is invisible to it and unchanged species keep
+    # inheriting the old artifacts. This is the escape hatch for that case.
+    # FALSE = normal; TRUE = force all; character vector = force those species.
+    # Defaults to FALSE so an older config.R without the key still works.
+    force_reprocess         = config$force_reprocess %||% FALSE,
+
     # Species universe (populated by Phase 1 = ingest, Phase 1.5 = change detection)
     all_species             = NULL,
     active_species          = NULL,

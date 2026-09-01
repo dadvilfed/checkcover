@@ -170,6 +170,34 @@ This makes an incremental version cheap: the v1.0 → v1.1 run in the reference
 dataset reprocessed 16 of 676 species. `<version>/checkover/manifest.json` is
 the consumer-facing record of what lives where.
 
+### Forcing a reprocess
+
+Fingerprints cover the **input data**, so a code-only change — a new output
+property, a geometry fix, a renamed JSON key — is invisible to change
+detection. Every species comes out `unchanged`, keeps inheriting the previous
+version's artifacts, and the fix never reaches the output. `force_reprocess`
+in `config.R` is the override:
+
+```r
+CONFIG$force_reprocess <- FALSE                  # normal sparse versioning
+CONFIG$force_reprocess <- TRUE                   # rebuild every species
+CONFIG$force_reprocess <- c("Cherax destructor") # rebuild only these
+```
+
+The vector form accepts either the display name or the package id
+(`Cherax_destructor`); names matching no species in the run are reported rather
+than silently ignored.
+
+Forced species are recorded as `reprocessed` — never `new`, which would drop
+`prior_source_version` and cost the temporal delta — with a `change_summary`
+stating the reprocess was forced, so a manifest full of reprocessed species is
+never mistaken for that many real data changes. The temporal pipeline is
+unaffected: Phase 5C runs its own data comparison and still skips species whose
+occurrences are identical, so no spurious per-species versions are created.
+
+Use it for code-only changes, then set it back to `FALSE`. Data changes need no
+override.
+
 ---
 
 ## Verification

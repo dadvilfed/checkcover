@@ -21,14 +21,26 @@ CONFIG <- list(
   ),
   
   # 3. Vernacular Names
+  # NB the "(Table_S2)" prefix is part of the filename. The repository carries
+  # BOTH an unprefixed and a prefixed copy of this table (and of the ecoregion
+  # list) with identical contents, because they are also published as manuscript
+  # supplements under their supplement numbers. The Dockerfile copies only the
+  # prefixed pair, so pointing config at the unprefixed name made Module 1B stop
+  # with "Vernacular file path is invalid" inside the container. Naming the
+  # prefixed file here works in every context.
+  #
+  # Keeping two copies of a 46 KB lookup in sync by hand is a trap — the
+  # Cambarus emegi addition (2026-08) had to be applied to both. Worth
+  # collapsing to one filename, but that is a repository decision, not a
+  # config-file one.
   vernaculars = list(
     source = "file",  # Options: "itis" or "file"
-    path   = "vernacular_names_wide.tsv"
+    path   = "(Table_S2)vernacular_names_wide.tsv"
   ),
-  
+
   # 4. Dictionary Paths (for renaming IDs to human-readable names)
   dictionaries = list(
-    feow = "ecoregions_list.tsv",
+    feow = "(Table_S4)ecoregions_list.tsv",
     hydrobasins = "Table_S3.tsv"
   ),
   
@@ -88,7 +100,29 @@ CONFIG <- list(
     
     # Major version bump: set TRUE to force v1.X → v2.0 instead of v1.X+1
     major_bump = FALSE
-  )
+  ),
+
+  # 10. Reprocessing override (Phase 1.5)
+  #
+  # Sparse versioning fingerprints the INPUT DATA. A code-only change — a new
+  # output property, a geometry fix, a renamed JSON key — is therefore invisible
+  # to it: every species comes out "unchanged" and keeps inheriting the previous
+  # version's artifacts, so the fix never reaches the output. This is the escape
+  # hatch for that case.
+  #
+  #   FALSE                    normal sparse versioning (the default)
+  #   TRUE                     force every species through the pipeline
+  #   c("Cherax destructor")   force only these (display name or package id)
+  #
+  # Forced species are recorded as "reprocessed" with a change_summary saying
+  # the reprocess was forced, so a manifest full of reprocessed species is never
+  # mistaken for that many real data changes. The temporal delta (Phase 5C) is
+  # unaffected: it runs its own data comparison and still skips species whose
+  # occurrences are identical, so no spurious per-species versions are created.
+  #
+  # Use for code-only changes, then SET IT BACK TO FALSE. Data changes need no
+  # override — sparse versioning already handles those.
+  force_reprocess = FALSE
 )
 
 # Required R packages
