@@ -64,12 +64,55 @@ source("R/00_geo_canon.R")
 source("R/00_dwc_fields.R")
 source("R/00_spatial_sanitize.R")
 source("R/00_run_context.R")
+source("R/00_preflight.R")
 source("R/01e_change_detection.R")
+
+# Packages that install.packages() cannot fetch are reported with the command
+# that works, instead of failing with "package is not available" and leaving the
+# user to discover on their own that the package lives on GitHub.
+check_github_packages <- function(module = "PKG_LOADER") {
+  spec <- if (exists("GITHUB_PACKAGES")) GITHUB_PACKAGES else character(0)
+  if (length(spec) == 0L) return(invisible(TRUE))
+
+  need <- if (exists("GITHUB_PACKAGES_REQUIRED")) GITHUB_PACKAGES_REQUIRED else names(spec)
+  installed <- rownames(utils::installed.packages())
+  missing   <- setdiff(names(spec), installed)
+  if (length(missing) == 0L) return(invisible(TRUE))
+
+  blocking <- intersect(missing, need)
+
+  cat("\n")
+  cat("  Packages required from GitHub\n")
+  cat("  -----------------------------\n")
+  cat("  These are not on CRAN, so install.packages() cannot fetch them:\n\n")
+  for (p in missing) {
+    cat(sprintf("    %-12s %s\n", p,
+                if (p %in% need) "(required)" else "(optional)"))
+  }
+  cat("\n  Install with:\n\n")
+  cat("    install.packages(\"remotes\")\n")
+  for (p in missing) cat(sprintf("    remotes::install_github(\"%s\")\n", unname(spec[p])))
+  cat("\n")
+
+  if (length(blocking) > 0L) {
+    cat(sprintf("  %s supplies the TEOW terrestrial ecoregion polygons (Module 2C)\n",
+                paste(blocking, collapse = ", ")))
+    cat("  and has no local-file alternative, so the run would fail partway\n")
+    cat("  through. Stopping now rather than after the spatial joins.\n\n")
+    log_error("Missing required GitHub package(s): %s",
+              paste(blocking, collapse = ", "), module = module)
+    stop("Missing required GitHub package(s): ", paste(blocking, collapse = ", "),
+         ". See the install commands above.", call. = FALSE)
+  }
+
+  cat("  All of the above are optional; continuing.\n\n")
+  invisible(TRUE)
+}
 
 install_missing <- function(packages, module = "PKG_LOADER") {
   installed <- utils::installed.packages()[, "Package"]
   missing <- setdiff(packages, installed)
-  
+
   if (length(missing) == 0L) {
     log_info("All required packages installed.", module = module)
     return(invisible(NULL))
@@ -113,7 +156,13 @@ load_packages <- function(packages, module = "PKG_LOADER") {
   })
 }
 
+check_github_packages()
 load_packages(REQUIRED_PACKAGES)
+
+# Step 3b: Verify the run can complete BEFORE any processing starts.
+# Everything that is missing is reported in one pass, so a broken setup costs
+# one run to diagnose instead of one run per missing file.
+preflight_check(CONFIG)
 
 # Step 4: Setup parallelization
 cat("Configuring parallel processing...\n")

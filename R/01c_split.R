@@ -40,11 +40,50 @@ split_by_population <- function(result, output_dir = "checkover_output") {
     result$clean_data <- cd
     result$clean_sf <- sf_pts
     
-    # Check for NAs
+    # ── Records without a usable establishmentMeans ──────────────────────────
+    # cheCkOVER processes two population streams, indigenous and non-indigenous,
+    # because that is what World of Crayfish records. Per the WoC submission
+    # guidelines, establishmentMeans is MANDATORY and takes exactly two values;
+    # the five-value vocabulary (native, type locality, introduced, invasive,
+    # cryptogenic) belongs to the separate occurrenceOrigin field, and the two
+    # axes are deliberately never merged. A record with no establishmentMeans
+    # therefore cannot be assigned to a stream, and is excluded.
+    #
+    # That is by design, but it used to happen behind a single log line. A
+    # dataset exported from GBIF or a similar aggregator often leaves the column
+    # empty even though it is present, in which case EVERY record is excluded
+    # and the run completes with empty outputs and no obvious cause (Reviewer 1,
+    # Ecological Informatics, 2026-09). The exclusion is now stated on the
+    # console, in proportion, with the likely cause named.
     na_count <- sum(is.na(cd$population_type))
     if (na_count > 0) {
-      log_warn("Found %d records with unknown population type. Excluding from analysis.", 
-               na_count, module = module)
+      pct <- 100 * na_count / max(nrow(cd), 1)
+      log_warn("Excluding %d of %d records (%.1f%%): no usable establishmentMeans.",
+               na_count, nrow(cd), pct, module = module)
+
+      cat("\n")
+      cat("  [!] establishmentMeans missing or unrecognised\n")
+      cat(sprintf("      %d of %d records (%.1f%%) are excluded from all analysis.\n",
+                  na_count, nrow(cd), pct))
+      cat("      cheCkOVER splits occurrences into indigenous and non-indigenous\n")
+      cat("      streams; a record with neither value cannot enter either stream.\n")
+      cat("      Accepted values: 'indigenous' or 'non-indigenous'.\n")
+      cat("      Datasets exported from GBIF and similar aggregators frequently\n")
+      cat("      carry this column but leave it empty. If that is your source,\n")
+      cat("      populate establishmentMeans before running -- see the WoC\n")
+      cat("      submission guidelines. Note it is a DIFFERENT field from\n")
+      cat("      occurrenceOrigin (native / type locality / introduced /\n")
+      cat("      invasive / cryptogenic), which is not a substitute for it.\n")
+      if (na_count == nrow(cd)) {
+        cat("\n")
+        cat("      ALL records lack establishmentMeans. Every downstream output\n")
+        cat("      will be empty. Stopping would hide the rest of the report, so\n")
+        cat("      the run continues -- but nothing meaningful will be produced.\n")
+        log_error("All %d records lack establishmentMeans; outputs will be empty.",
+                  na_count, module = module)
+      }
+      cat("\n")
+
       cd <- cd[!is.na(cd$population_type), ]
       sf_pts <- sf_pts[!is.na(sf_pts$population_type), ]
     }

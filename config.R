@@ -49,6 +49,17 @@ CONFIG <- list(
     ne_scale     = "medium",
     gadm_version = "4.1",
     wdpa_km      = 2,
+    # Passed to wdpar::wdpa_clean(). The package defaults this to TRUE, which
+    # dissolves every overlap between protected areas in a country and is by
+    # far the largest cost in the workflow — hours per country, and the wdpar
+    # authors recommend disabling it for larger datasets.
+    #
+    # FALSE also suits what cheCkOVER asks of WDPA: it reports how many DISTINCT
+    # protected areas a species occurs in, and a record inside a national park
+    # nested within a biosphere reserve genuinely sits in both. Protection
+    # percentage is unaffected either way. Set TRUE only if you specifically
+    # need mutually exclusive, non-overlapping protected-area geometry.
+    wdpa_erase_overlaps = FALSE,
     hydro_dir    = "spatial_data/hydrobasins",
     hydro_bbox   = 50,
     hydro_files  = list(
@@ -152,16 +163,37 @@ CONFIG <- list(
   force_reprocess = FALSE
 )
 
-# Required R packages
+# Required R packages, available from CRAN.
 REQUIRED_PACKAGES <- c(
   "sf", "sp", "raster", "terra", "dplyr", "tidyr", "jsonlite",
   "httr", "xml2", "rvest", "rnaturalearth", "rnaturalearthdata",
   "lwgeom", "units", "stringr", "lubridate", "ggplot2", "ggspatial",
   "mapview", "leaflet", "htmlwidgets", "glue", "readxl", "openxlsx",
   "yaml", "DT", "knitr", "rmarkdown", "worrms", "ritis", "wdpar",
-  "geodata", "ecoregions", "digest", "future", "future.apply",
+  "geodata", "digest", "future", "future.apply",
   "readtext", "docxtractr", "progress"
 )
+
+# Packages that are NOT on CRAN. install.packages() cannot fetch these, so they
+# are listed separately: the loader reports them with the command that works
+# instead of failing with "package is not available" (Reviewer 1, Ecological
+# Informatics, 2026-09 — `ecoregions` was in the CRAN list above, so a new user
+# hit an install failure, and Supplementary S1 listed it as a CRAN package).
+#
+#   ecoregions - supplies the TEOW terrestrial ecoregion polygons used by
+#                Module 2C. There is no local-file alternative for TEOW, so it
+#                is required for a full run.
+#   feowR      - OPTIONAL alternative source for FEOW freshwater ecoregions.
+#                Module 2D already works without it: CONFIG$spatial$feow_source
+#                accepts "local" (a shapefile you supply, the default) or
+#                "feowR" / "auto" to use this package instead.
+GITHUB_PACKAGES <- c(
+  ecoregions = "jeffreyhanson/ecoregions",
+  feowR      = "mhpob/feowR"
+)
+
+# Which of the above a full run genuinely needs.
+GITHUB_PACKAGES_REQUIRED <- c("ecoregions")
 # # LINUX SERVER (production, full dataset):
 # #   parallel$force_sequential = FALSE
 # #   parallel$workers = "auto"  # or 8-16 depending on cores

@@ -305,22 +305,70 @@ map_woc_to_checkover <- function(woc_data, module = "MODULE1_INGEST") {
       comments
     ) %>%
 
-    # Filter out invalid records
-    filter(
-      !is.na(species) & species != "",
-      !is.na(longitude) & !is.na(latitude),
-      between(longitude, -180, 180),
-      between(latitude, -90, 90),
-      !is.na(year)
-    )
+    identity()
 
-  log_info(
-    "Mapped %d valid records from %d input records.",
-    nrow(checkover_data),
-    nrow(woc_data),
-    module = module
+  # ── Validation audit ──────────────────────────────────────────────────────
+  # Records used to disappear inside a single filter() that reported only a
+  # before/after count, so a user could not tell WHY anything was dropped
+  # (Reviewer 1, Ecological Informatics, 2026-09). Each record is now charged to
+  # the FIRST criterion it fails, so the per-reason tally sums exactly to the
+  # number removed — a record with no coordinates AND no year is counted once,
+  # not twice.
+  n_in <- nrow(checkover_data)
+  drop_reason <- rep(NA_character_, n_in)
+
+  mark <- function(mask, reason) {
+    mask[is.na(mask)] <- TRUE          # an NA test result is a failed test
+    hit <- mask & is.na(drop_reason)
+    drop_reason[hit] <<- reason
+  }
+
+  mark(is.na(checkover_data$species) | !nzchar(trimws(checkover_data$species)),
+       "missing scientificName")
+  mark(is.na(checkover_data$longitude) | is.na(checkover_data$latitude),
+       "missing coordinates")
+  mark(!dplyr::between(checkover_data$longitude, -180, 180),
+       "longitude outside -180..180")
+  mark(!dplyr::between(checkover_data$latitude, -90, 90),
+       "latitude outside -90..90")
+  mark(is.na(checkover_data$year), "missing year")
+
+  keep <- is.na(drop_reason)
+  # Built explicitly, never via as.data.frame(table(...)): a 0-level table
+  # collapses to a single "Freq" column, so naming two columns errors out
+  # whenever nothing was dropped — the same trap that crashed Module 7 on an
+  # all-NA citation vector (2026-08).
+  tab <- table(drop_reason[!keep], useNA = "no")
+  audit <- data.frame(
+    reason          = if (length(tab)) names(tab)      else character(0),
+    records_removed = if (length(tab)) as.integer(tab) else integer(0),
+    stringsAsFactors = FALSE
+  )
+  if (nrow(audit) > 0) audit <- audit[order(-audit$records_removed), , drop = FALSE]
+
+  # Keep the identifiers of what was dropped so a user can trace it back. No
+  # coordinates: this file is written into the run directory and the raw
+  # exports carry confidential localities.
+  dropped_ids <- data.frame(
+    input_row  = which(!keep),
+    record_id  = if ("record_id" %in% names(checkover_data))
+                   as.character(checkover_data$record_id)[!keep] else NA_character_,
+    species    = as.character(checkover_data$species)[!keep],
+    reason     = drop_reason[!keep],
+    stringsAsFactors = FALSE
   )
 
+  checkover_data <- checkover_data[keep, , drop = FALSE]
+
+  log_info("Mapped %d valid records from %d input records (%d removed).",
+           nrow(checkover_data), n_in, n_in - nrow(checkover_data), module = module)
+  for (i in seq_len(nrow(audit))) {
+    log_info("  removed %6d  %s", audit$records_removed[i], audit$reason[i],
+             module = module)
+  }
+
+  attr(checkover_data, "validation_audit")   <- audit
+  attr(checkover_data, "validation_dropped") <- dropped_ids
   checkover_data
 }
 
@@ -517,16 +565,81 @@ ingest_clean <- function(file_path, output_dir = "checkover_output",
     # Additional cleaning
     year_now <- as.numeric(format(Sys.Date(), "%Y"))
     
+    map_audit   <- attr(clean_data, "validation_audit")   %||% NULL
+    map_dropped <- attr(clean_data, "validation_dropped") %||% NULL
+
+    # Each cleaning step is now measured, not just applied, so the run can state
+    # exactly what it discarded and why (Reviewer 1, 2026-09).
+    n_mapped <- nrow(clean_data)
+
+    # NB de-duplication keys on species + coordinates + year, NOT on source.
+    # The manuscript (lines 151-152) says source is part of the key; it is not.
+    # Two records of the same occurrence from different publications collapse to
+    # one, and the survivor's citation is the only one carried into the
+    # bibliography. Reported by Reviewer 1; changing the key would change every
+    # record count in the paper, so it is left alone and reported honestly here.
     clean_data <- clean_data %>%
-      dplyr::distinct(species, longitude, latitude, year, .keep_all = TRUE) %>%
+      dplyr::distinct(species, longitude, latitude, year, .keep_all = TRUE)
+    n_dedup <- n_mapped - nrow(clean_data)
+
+    clean_data <- clean_data %>%
       dplyr::mutate(
         species = stringr::str_replace_all(species, "\\s+", " "),
         species = stringr::str_to_sentence(species)
-      ) %>%
-      dplyr::filter(dplyr::between(year, 1500, year_now))
-    
+      )
+
+    yr_bad  <- !dplyr::between(clean_data$year, 1500, year_now)
+    yr_bad[is.na(yr_bad)] <- TRUE
+    n_year  <- sum(yr_bad)
+    clean_data <- clean_data[!yr_bad, , drop = FALSE]
+
     log_info("After cleaning: %d records (year range 1500-%d).",
              nrow(clean_data), year_now, module = module)
+
+    # ── Consolidated validation report ──────────────────────────────────────
+    full_audit <- rbind(
+      map_audit %||% data.frame(reason = character(), records_removed = integer()),
+      data.frame(
+        reason = c("duplicate (species + coordinates + year)",
+                   sprintf("year outside 1500-%d", year_now)),
+        records_removed = c(n_dedup, n_year),
+        stringsAsFactors = FALSE
+      )
+    )
+    full_audit <- full_audit[full_audit$records_removed > 0, , drop = FALSE]
+    full_audit <- full_audit[order(-full_audit$records_removed), , drop = FALSE]
+
+    n_raw     <- nrow(woc_raw)
+    n_removed <- sum(full_audit$records_removed)
+
+    cat("\n")
+    cat("  Ingest validation report\n")
+    cat("  ------------------------\n")
+    cat(sprintf("  %-46s %8d\n", "input records", n_raw))
+    for (i in seq_len(nrow(full_audit))) {
+      cat(sprintf("  %-46s %8d  (%.2f%%)\n",
+                  paste0("- ", full_audit$reason[i]),
+                  full_audit$records_removed[i],
+                  100 * full_audit$records_removed[i] / max(n_raw, 1)))
+    }
+    cat(sprintf("  %-46s %8d  (%.2f%%)\n", "total removed", n_removed,
+                100 * n_removed / max(n_raw, 1)))
+    cat(sprintf("  %-46s %8d\n", "records retained", nrow(clean_data)))
+    cat("\n")
+    cat("  Records are charged to the FIRST criterion they fail, so the\n")
+    cat("  per-reason counts sum to the total.\n\n")
+
+    audit_path <- file.path(output_dir, "ingest_validation_report.tsv")
+    write_tsv(full_audit, audit_path)
+    log_info("Wrote validation report: %s", audit_path, module = module)
+
+    if (!is.null(map_dropped) && nrow(map_dropped) > 0) {
+      dropped_path <- file.path(output_dir, "ingest_dropped_records.tsv")
+      write_tsv(map_dropped, dropped_path)
+      log_info("Wrote %d dropped record identifiers: %s",
+               nrow(map_dropped), dropped_path, module = module)
+      cat(sprintf("  Identifiers of dropped records: %s\n\n", basename(dropped_path)))
+    }
     
     # Identify type localities
     type_localities <- clean_data %>%

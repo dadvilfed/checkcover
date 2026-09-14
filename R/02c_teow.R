@@ -14,6 +14,19 @@ load_teow <- function(cache_dir, module = "MODULE2C_TEOW") {
   
   log_info("Loading TEOW (world terrestrial ecoregions)...", module = module)
   
+  # `ecoregions` is a GitHub package, not a CRAN one, and TEOW has no
+  # local-file alternative (unlike FEOW, where CONFIG$spatial$feow_source lets
+  # you supply a shapefile). Without this guard the failure surfaced as an
+  # opaque utils::data() error deep into the run (Reviewer 1, 2026-09).
+  if (!requireNamespace("ecoregions", quietly = TRUE)) {
+    log_error("Package 'ecoregions' is not installed.", module = module)
+    stop("Module 2C needs the 'ecoregions' package for TEOW polygons. ",
+         "It is not on CRAN; install it with:\n",
+         "    install.packages(\"remotes\")\n",
+         "    remotes::install_github(\"jeffreyhanson/ecoregions\")",
+         call. = FALSE)
+  }
+
   teow_env <- new.env(parent = emptyenv())
   utils::data("worldecoregions", package = "ecoregions", envir = teow_env)
   teow <- get("worldecoregions", envir = teow_env)

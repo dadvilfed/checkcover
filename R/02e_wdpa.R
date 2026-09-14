@@ -75,8 +75,26 @@ enrich_with_wdpa <- function(result, output_dir = "checkover_output",
           return(.empty_sf(target_crs))
         }
         if (clean_wdpa_geometry && "wdpa_clean" %in% getNamespaceExports("wdpar")) {
-          log_info("Cleaning WDPA geometries for %s...", iso, module = module)
-          x_try <- try(wdpar::wdpa_clean(x), silent = TRUE)
+          # erase_overlaps is the single largest cost in the whole workflow.
+          # wdpa_clean() defaults it to TRUE, which dissolves every overlap
+          # between protected areas in a country — an O(n^2)-ish planar
+          # operation that the wdpar authors themselves recommend disabling for
+          # larger datasets. Called with bare defaults, it took ~18 hours for
+          # four amphibian species on a 64 GB desktop, against the 3 hours the
+          # README claimed for the full global crayfish dataset (Reviewer 1,
+          # Ecological Informatics, 2026-09).
+          #
+          # FALSE is also the better answer for what cheCkOVER asks of WDPA.
+          # Erasing overlaps assigns each piece of ground to exactly one area,
+          # so a record inside a national park nested in a biosphere reserve is
+          # credited to only one of them. cheCkOVER reports how many DISTINCT
+          # protected areas a species occurs in, for which both designations are
+          # genuine. Protection percentage — records intersecting at least one
+          # area — is identical either way.
+          erase_ov <- CONFIG$spatial$wdpa_erase_overlaps %||% FALSE
+          log_info("Cleaning WDPA geometries for %s (erase_overlaps = %s)...",
+                   iso, erase_ov, module = module)
+          x_try <- try(wdpar::wdpa_clean(x, erase_overlaps = erase_ov), silent = TRUE)
           if (!inherits(x_try, "try-error")) {
             x <- x_try
           } else {
