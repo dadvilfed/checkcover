@@ -375,6 +375,35 @@ generate_canonical_narratives <- function(scenario_table,
   data.frame(value = names(tb), n = as.integer(tb), stringsAsFactors = FALSE)
 }
 
+#' Frequency table over a PIPE-JOINED multi-value column.
+#'
+#' Several enrichment columns hold every match for a record, joined with " | " —
+#' protected_area is the clearest case, where one occurrence can sit inside a
+#' national park that is itself inside a larger reserve.
+#'
+#' .freq_table() would count "Park A | Reserve B" as a category distinct from
+#' "Park A" and from "Reserve B", fragmenting the list into compound entries.
+#' That was mostly hidden while WDPA geometries were cleaned with
+#' erase_overlaps = TRUE, because dissolving overlaps left at most one match per
+#' record. Turning that off (CONFIG$spatial$wdpa_erase_overlaps, 2026-09) makes
+#' multi-match cells normal, so the split has to happen here.
+#'
+#' The per-record report module already splits on the same separator for
+#' n_distinct_protected_areas; this brings the narrative into line with it.
+#'
+#' NB a record counted under two areas contributes to both, so percentages over
+#' the record total can legitimately sum to more than 100%.
+.freq_table_multi <- function(x, sep = "\\s*\\|\\s*") {
+  x <- .drop_unusable(x)
+  if (length(x) == 0) return(data.frame(value = character(0), n = integer(0)))
+  parts <- unlist(strsplit(as.character(x), sep))
+  parts <- trimws(parts)
+  parts <- parts[!is.na(parts) & nzchar(parts)]
+  if (length(parts) == 0) return(data.frame(value = character(0), n = integer(0)))
+  tb <- sort(table(parts), decreasing = TRUE)
+  data.frame(value = names(tb), n = as.integer(tb), stringsAsFactors = FALSE)
+}
+
 
 # ===========================================================================
 # HELPER: Safe numeric formatting
@@ -878,7 +907,7 @@ generate_canonical_narratives <- function(scenario_table,
   
   n_prot      <- ind_report$conservation$n_protected_records %||% NA
   pct_prot    <- ind_report$conservation$protection_percentage %||% NA
-  pa_ft       <- .freq_table(sp_ind$protected_area[!is.na(sp_ind$protected_area) & nzchar(sp_ind$protected_area)])
+  pa_ft       <- .freq_table_multi(sp_ind$protected_area[!is.na(sp_ind$protected_area) & nzchar(sp_ind$protected_area)])
   n_pa_total  <- nrow(sp_ind)  # denominator for PA % per ecoregion uses total records
   
   if (!is.na(n_prot)) {
@@ -1119,7 +1148,7 @@ generate_canonical_narratives <- function(scenario_table,
   }
   
   # Protected areas
-  pa_ft_nind    <- .freq_table(sp_nind$protected_area[!is.na(sp_nind$protected_area) & nzchar(sp_nind$protected_area)])
+  pa_ft_nind    <- .freq_table_multi(sp_nind$protected_area[!is.na(sp_nind$protected_area) & nzchar(sp_nind$protected_area)])
   n_rec_nind    <- nrow(sp_nind)
   if (nrow(pa_ft_nind) > 0) {
     pa_str_nind <- paste(
