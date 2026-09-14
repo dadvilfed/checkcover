@@ -388,7 +388,15 @@ generate_indigenous_reports <- function(result_indigenous,
     status            = as.character(fr$status),
     n_clusters        = if (!is.na(fr$n_clusters))     as.integer(fr$n_clusters)    else NA,
     cluster_sizes     = if (!is.na(fr$cluster_sizes_n)) as.character(fr$cluster_sizes_n) else NA,
-    mean_threshold_km = if (!is.na(fr$mean_distance_km)) as.numeric(fr$mean_distance_km) else NA
+    # threshold_km is the absolute cut height the clusters were computed under;
+    # mean_pairwise_distance_km is a descriptive statistic of the points and is
+    # NOT the threshold. They were conflated under the old "mean_threshold_km"
+    # key, which was accurate only because the cut height used to BE the mean —
+    # the defect that made a single cluster unreachable (Reviewer 1, 2026-09).
+    threshold_km              = if (!is.null(fr$threshold_km) && !is.na(fr$threshold_km))
+                                  as.numeric(fr$threshold_km) else NA,
+    mean_pairwise_distance_km = if (!is.na(fr$mean_distance_km))
+                                  as.numeric(fr$mean_distance_km) else NA
   )
 }
 

@@ -46,14 +46,11 @@ calculate_indigenous_metrics <- function(result_indigenous, output_dir = "checko
     }
     
     # Helper: Calculate AOO
-    .calc_aoo <- function(lon, lat) {
-      coords <- data.frame(lon, lat)
-      coords <- coords[is.finite(coords$lon) & is.finite(coords$lat), ]
-      if (nrow(coords) == 0) return(NA_real_)
-      grid_size <- 0.018  # ~2km
-      n_cells <- length(unique(paste(floor(coords$lon/grid_size), floor(coords$lat/grid_size))))
-      return(n_cells * 4)  # 4 km² per cell
-    }
+    # Delegates to calc_aoo_km2() in 00_helpers.R: one equal-area implementation
+    # for the whole workflow. The local 0.018-degree lattice this replaced
+    # credited every occupied cell a flat 4 km2 regardless of latitude, which
+    # overcredited by ~2.4x at 65N (Reviewer 1, 2026-09).
+    .calc_aoo <- function(lon, lat) calc_aoo_km2(lon, lat)
     
     # Calculate metrics per species
     log_info("Calculating EOO and AOO...", module = module)

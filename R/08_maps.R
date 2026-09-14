@@ -187,36 +187,47 @@ generate_all_maps <- function(scenario_table,
         # st_make_grid on a global bounding box (e.g. P. clarkii: North America + Europe)
         # with 0.018° cells creates ~500 million grid cells → memory explosion.
         # Floor-based approach only creates cells where points actually exist.
+        # The drawn cells MUST be the cells the metric counts, or the map
+        # contradicts aoo_km2 in the same package. Both now use the equal-area
+        # lattice of calc_aoo_km2(): cells are built in EPSG:6933 metres, where
+        # they are truly 2 x 2 km, then projected back to 4326 for output. The
+        # 0.018-degree cells this replaced were ~2 km wide only near the equator
+        # (Reviewer 1, 2026-09).
         aoo_poly <- NULL
         tryCatch({
-          coords <- sf::st_coordinates(sp_sf)
-          grid_size <- 0.018  # ~2km
-          
-          # Compute unique grid cell origins using floor
-          cell_x <- floor(coords[, 1] / grid_size) * grid_size
-          cell_y <- floor(coords[, 2] / grid_size) * grid_size
+          cell_m  <- CHECKOVER_AOO_CELL_KM * 1000
+          pts_ea  <- sf::st_transform(sp_sf, CHECKOVER_AOO_CRS)
+          coords  <- sf::st_coordinates(pts_ea)
+
+          # Floor-based: only cells that actually contain points are built.
+          # st_make_grid over a global bbox would allocate ~500M cells for a
+          # species spanning North America and Europe (P. clarkii).
+          cell_x <- floor(coords[, 1] / cell_m) * cell_m
+          cell_y <- floor(coords[, 2] / cell_m) * cell_m
           unique_cells <- unique(data.frame(x = cell_x, y = cell_y))
-          
-          log_info("  AOO: %d unique cells from %d points", nrow(unique_cells), nrow(coords), module = module)
-          
+
+          log_info("  AOO: %d unique cells from %d points (%d km2)",
+                   nrow(unique_cells), nrow(coords),
+                   nrow(unique_cells) * CHECKOVER_AOO_CELL_KM^2, module = module)
+
           if (nrow(unique_cells) > 0) {
-            # Build cell polygons directly from unique cell origins
             cell_polys <- lapply(seq_len(nrow(unique_cells)), function(i) {
               x0 <- unique_cells$x[i]
               y0 <- unique_cells$y[i]
               sf::st_polygon(list(matrix(c(
                 x0, y0,
-                x0 + grid_size, y0,
-                x0 + grid_size, y0 + grid_size,
-                x0, y0 + grid_size,
+                x0 + cell_m, y0,
+                x0 + cell_m, y0 + cell_m,
+                x0, y0 + cell_m,
                 x0, y0
               ), ncol = 2, byrow = TRUE)))
             })
-            
-            aoo_sfc <- sf::st_sfc(cell_polys, crs = sf::st_crs(sp_sf))
+
+            aoo_sfc <- sf::st_sfc(cell_polys, crs = CHECKOVER_AOO_CRS)
             u <- sf::st_union(aoo_sfc)
             if (!all(sf::st_is_valid(u))) u <- sf::st_make_valid(u)
-            aoo_poly <- u
+            # Back to the CRS the rest of the map output is written in.
+            aoo_poly <- sf::st_transform(u, sf::st_crs(sp_sf))
           }
         }, error = function(e) {
           log_warn("  AOO calculation failed: %s", conditionMessage(e), module = module)

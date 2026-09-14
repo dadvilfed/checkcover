@@ -1,9 +1,28 @@
-#### MODULE 1D: FRAGMENTATION ANALYSIS ####
-analyze_fragmentation <- function(result, output_dir, category_filter = NULL) {
+#### MODULE 1D: SPATIAL CLUSTERING ANALYSIS ####
+#
+#' @param threshold_km Absolute separation threshold in kilometres. Two points
+#'   fall in the same cluster when a chain of points links them with no gap
+#'   wider than this. PROVISIONAL DEFAULT — pending an ecologically justified
+#'   value from Lucian; it is a configuration choice, not a property of the
+#'   workflow, and is recorded in every output so a package always states the
+#'   threshold it was computed under.
+#' @param linkage Agglomeration method. "single" answers "are there gaps wider
+#'   than the threshold?"; see the note at the cutree() call before changing it.
+analyze_fragmentation <- function(result, output_dir, category_filter = NULL,
+                                  threshold_km = NULL,
+                                  linkage = NULL) {
   module <- "MODULE1D_FRAG"
-  
+
+  # Config is the source of truth; arguments override it for tests.
+  cfg <- if (exists("CONFIG", envir = globalenv())) get("CONFIG", envir = globalenv()) else NULL
+  threshold_km <- threshold_km %||% cfg$clustering$threshold_km %||% 10
+  clustering_linkage <- linkage %||% cfg$clustering$linkage %||% "single"
+  threshold_m  <- threshold_km * 1000
+
   with_log_section(module, {
-    log_info("=== MODULE 1D: FRAGMENTATION ANALYSIS ===", module = module)
+    log_info("=== MODULE 1D: SPATIAL CLUSTERING ANALYSIS ===", module = module)
+    log_info("Clustering threshold: %.2f km (linkage: %s)",
+             threshold_km, clustering_linkage, module = module)
     
     cd <- result$clean_data
     
@@ -30,6 +49,7 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL) {
           n_clusters = integer(),
           cluster_sizes_n = character(),
           mean_distance_km = numeric(),
+          threshold_km = numeric(),
           stringsAsFactors = FALSE
         )
         return(result)
@@ -64,7 +84,8 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL) {
         status = "not_computed",
         n_clusters = NA_integer_,
         cluster_sizes_n = NA_character_,
-        mean_distance_km = NA_real_
+        mean_distance_km = NA_real_,
+        threshold_km = threshold_km
       )
       
       # Skip cosmopolitan
@@ -90,16 +111,38 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL) {
         } else {
           pts_sf <- sf::st_as_sf(valid_pts, coords = c("longitude", "latitude"), crs = 4326)
           pts_ea <- sf::st_transform(pts_sf, ea_crs)
-          
-          # Distance matrix
+
+          # Distance matrix (metres, equal-area CRS)
           dist_mat <- sf::st_distance(pts_ea)
           dist_vals <- as.numeric(dist_mat[lower.tri(dist_mat)])
           d_mean <- mean(dist_vals, na.rm = TRUE)
-          
-          # Hierarchical clustering
-          hc <- hclust(as.dist(dist_mat), method = "complete")
-          clusters <- cutree(hc, h = d_mean)
-          
+
+          # ── Spatial clustering ─────────────────────────────────────────────
+          # The cut height MUST be an absolute distance, never a statistic of
+          # the points themselves.
+          #
+          # Until 2026-09 this cut at h = mean(pairwise distance). With complete
+          # linkage the root merge height IS the maximum pairwise distance, and
+          # the mean is below the maximum whenever distances vary at all — so
+          # the root merge was always severed and a single cluster was
+          # UNREACHABLE BY CONSTRUCTION. Over 1,000 simulated draws of five
+          # points within one metre, the old rule returned 1 cluster zero times.
+          # Worse, being scale-free it tracked sample size rather than spatial
+          # structure (n=5 -> ~2 clusters, n=200 -> ~11) and was anti-correlated
+          # with real fragmentation: one tight blob scored 8 clusters while two
+          # genuinely separated blobs scored 2. Reported by Reviewer 1,
+          # Ecological Informatics, 2026-09.
+          #
+          # Single linkage, not complete: the question this metric answers is
+          # "are there gaps wider than the threshold?", which is a connectivity
+          # property. Complete linkage constrains cluster DIAMETER instead, so
+          # it splits a long river system into many clusters purely because it
+          # is long — conflating extent with fragmentation.
+          clusters <- cutree(
+            hclust(as.dist(dist_mat), method = clustering_linkage),
+            h = threshold_m
+          )
+
           n_clust <- length(unique(clusters))
           
           # Cluster sizes
@@ -113,6 +156,7 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL) {
           res$computed <- TRUE
           res$scope <- "endemic_or_regional"
           res$mean_distance_km <- round(d_mean / 1000, 2)
+          res$threshold_km     <- threshold_km
           res$n_clusters <- n_clust
           res$cluster_sizes_n <- paste(size_strs, collapse = ", ")
           res$status <- if (n_clust > 1) "detected" else "none_detected"

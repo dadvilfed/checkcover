@@ -332,14 +332,62 @@ fmt_latlon <- function(lat, lon, digits = 2) {
   return(NA_real_)
 }
 
-.calc_aoo_val <- function(lon, lat) {
-  coords <- data.frame(lon, lat)
-  coords <- coords[is.finite(coords$lon) & is.finite(coords$lat), ]
-  if (nrow(coords) == 0) return(NA_real_)
-  grid_size <- 0.018
-  n_cells <- length(unique(paste(floor(coords$lon/grid_size), floor(coords$lat/grid_size))))
-  return(n_cells * 4)
+#' Area of occupancy on a true equal-area 2 x 2 km lattice.
+#'
+#' THE canonical AOO implementation. Seven copies of the same lattice arithmetic
+#' existed across the modules (00_helpers, 03a, 04a, 04_reports, 08_maps,
+#' 08_maps_parallel, 11_temporal_delta); they now all delegate here.
+#'
+#' Until 2026-09 the lattice was 0.018 degrees of longitude/latitude with each
+#' occupied cell credited a flat 4 km². Cell width in degrees contracts with
+#' latitude, so the credited area was correct only near the equator and
+#' increasingly wrong towards the poles — roughly 2.4x overcredited at 65°N,
+#' where a 0.018° cell is about 0.85 km wide, not 2 km. The manuscript disclosed
+#' the bias but justified it as the cost of avoiding per-species reprojection.
+#' Reviewer 1 (Ecological Informatics, 2026-09) pointed out that the workflow
+#' already reprojects to an equal-area CRS in the clustering module, so the
+#' justification did not hold. It does not: the transform below costs
+#' microseconds per species.
+#'
+#' EPSG:6933 (NSIDC EASE-Grid 2.0 Global) is cylindrical equal-area in metres,
+#' the same CRS the clustering module uses, so a cell is 2 x 2 km everywhere.
+#'
+#' @param lon,lat Numeric vectors of coordinates in EPSG:4326.
+#' @param cell_km Cell edge in kilometres. 2 is the IUCN Criterion B2 standard.
+#' @return Occupied area in km², or NA_real_ when no usable coordinates.
+CHECKOVER_AOO_CELL_KM <- 2
+CHECKOVER_AOO_CRS     <- 6933
+
+calc_aoo_km2 <- function(lon, lat, cell_km = CHECKOVER_AOO_CELL_KM) {
+  keep <- is.finite(lon) & is.finite(lat)
+  lon <- lon[keep]; lat <- lat[keep]
+  if (length(lon) == 0L) return(NA_real_)
+
+  cell_m <- cell_km * 1000
+
+  xy <- tryCatch({
+    pts <- sf::st_as_sf(data.frame(lon = lon, lat = lat),
+                        coords = c("lon", "lat"), crs = 4326)
+    sf::st_coordinates(sf::st_transform(pts, CHECKOVER_AOO_CRS))
+  }, error = function(e) NULL)
+
+  if (is.null(xy)) {
+    # Never silently fall back to the degree lattice — that would reintroduce
+    # the latitude bias under a function that promises equal area.
+    if (exists("log_warn", mode = "function")) {
+      log_warn("calc_aoo_km2(): equal-area transform failed; AOO not computed",
+               module = "HELPERS")
+    }
+    return(NA_real_)
+  }
+
+  n_cells <- length(unique(paste(floor(xy[, 1] / cell_m),
+                                 floor(xy[, 2] / cell_m))))
+  n_cells * (cell_km ^ 2)
 }
+
+# Back-compatible name used by 01c_metrics.R. Delegates; no second algorithm.
+.calc_aoo_val <- function(lon, lat) calc_aoo_km2(lon, lat)
 
 # Distribution category from EOO
 .level_for_cat <- function(cat) {

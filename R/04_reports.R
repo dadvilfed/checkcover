@@ -93,15 +93,9 @@ compute_species_metrics <- function(cd) {
           NA_real_
         }
       },
-      aoo_km2 = {
-        coords <- data.frame(lon = longitude, lat = latitude)
-        if (!nrow(coords)) {
-          NA_real_
-        } else {
-          grid <- 0.018
-          length(unique(paste(floor(coords$lon / grid), floor(coords$lat / grid)))) * 4
-        }
-      },
+      # One equal-area implementation for the whole workflow; see
+      # calc_aoo_km2() in 00_helpers.R.
+      aoo_km2 = calc_aoo_km2(longitude, latitude),
       .groups = "drop"
     )
 }
@@ -423,7 +417,11 @@ build_reports <- function(result, vernacular_result = NULL, output_dir = "checko
             status = na_chr(fr$status),
             n_clusters = na_num(fr$n_clusters),
             cluster_sizes_n = na_chr(fr$cluster_sizes_n),
-            mean_threshold_km = na_num(fr$mean_distance_km)
+            # See .build_frag_block_3c(): the absolute cut height and the mean
+            # pairwise distance are different quantities and are now reported
+            # under names that say which is which.
+            threshold_km = na_num(fr$threshold_km),
+            mean_pairwise_distance_km = na_num(fr$mean_distance_km)
           )
         }
       }

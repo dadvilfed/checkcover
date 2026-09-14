@@ -102,7 +102,34 @@ CONFIG <- list(
     major_bump = FALSE
   ),
 
-  # 10. Reprocessing override (Phase 1.5)
+  # 10. Spatial clustering (Module 1D)
+  #
+  # threshold_km is the absolute separation above which occurrences are treated
+  # as belonging to different clusters: two points share a cluster when a chain
+  # of points links them with no gap wider than this.
+  #
+  # It MUST be an absolute distance. Until 2026-09 the cut height was the mean
+  # pairwise distance of the points themselves, which made a single cluster
+  # unreachable by construction (complete linkage puts the root merge at the
+  # MAXIMUM pairwise distance, and the mean is always below it). Every species
+  # with enough coordinates therefore scored >1 cluster — 494 of 494 in v1.2 —
+  # and the count tracked sample size rather than spatial structure. Reported by
+  # Reviewer 1, Ecological Informatics, 2026-09.
+  #
+  # *** PROVISIONAL VALUE — awaiting an ecologically justified threshold from
+  # *** Lucian. This is a configuration choice, not a property of the workflow;
+  # *** it is written into every output so a package always states the value it
+  # *** was computed under. Do not cite clustering results until it is settled.
+  #
+  # linkage: "single" asks "are there gaps wider than the threshold?", which is
+  # the connectivity question this metric is for. "complete" constrains cluster
+  # diameter instead and splits long river systems purely because they are long.
+  clustering = list(
+    threshold_km = 10,
+    linkage      = "single"
+  ),
+
+  # 11. Reprocessing override (Phase 1.5)
   #
   # Sparse versioning fingerprints the INPUT DATA. A code-only change — a new
   # output property, a geometry fix, a renamed JSON key — is therefore invisible

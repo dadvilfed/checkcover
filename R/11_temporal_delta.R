@@ -258,15 +258,11 @@ load_previous_version <- function(species_clean,
   NA_real_
 }
 
-.calc_aoo_default <- function(lon, lat) {
-  coords <- data.frame(lon = lon, lat = lat)
-  coords <- coords[is.finite(coords$lon) & is.finite(coords$lat), ]
-  if (nrow(coords) == 0L) return(NA_real_)
-  grid_size <- 0.018  # ~2 km
-  n_cells <- length(unique(paste(floor(coords$lon / grid_size),
-                                 floor(coords$lat / grid_size))))
-  n_cells * 4  # km² per 2x2 km cell
-}
+# Delegates to calc_aoo_km2() in 00_helpers.R. Critically, the temporal delta
+# compares a CURRENT AOO against one stored in a previous version, so if this
+# used a different lattice from the metrics modules the delta would measure the
+# difference between two algorithms rather than a change in the data.
+.calc_aoo_default <- function(lon, lat) calc_aoo_km2(lon, lat)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -350,9 +346,12 @@ parse_extinction_causes <- function(occurrences) {
 
 #' Suppress occurrences within 500 m geodesic radius of an extinction event
 #'
-#' Each extinction creates a circular buffer using `sf::st_buffer(dist = 500)`
-#' on EPSG:3857 (transformed back to EPSG:4326 for storage). Occurrences of the
-#' same species inside the circle with `year < extinction_year` are marked
+#' Membership is decided by true great-circle distance from the extinction
+#' point, via `sf::st_distance()` on EPSG:4326, so the radius is the same number
+#' of metres on the ground at every latitude. (It was previously an
+#' `sf::st_buffer()` in EPSG:3857, whose units are metres only at the equator —
+#' about 211 m at 65°N for a nominal 500 m; Reviewer 1, 2026-09.) Occurrences of
+#' the same species inside the radius with `year < extinction_year` are marked
 #' `temporal_status = "suppressed"`. Occurrences with `year >= extinction_year`
 #' remain `"active"` (recovery — no special tracking, per Lucian's simplified spec).
 #'
@@ -412,8 +411,7 @@ apply_spatial_temporal_mask <- function(occurrences,
     crs = 4326,
     remove = FALSE
   )
-  occ_sf_proj <- sf::st_transform(occ_sf_wgs, 3857)
-  
+
   unlinked_count <- 0L
   
   for (i in seq_len(nrow(extinctions))) {
@@ -424,15 +422,42 @@ apply_spatial_temporal_mask <- function(occurrences,
       next
     }
     
-    # Build 500 m circle in projected CRS, keep projected for st_intersects
-    ext_pt_proj <- sf::st_sfc(
-      sf::st_point(c(ext$longitude, ext$latitude)),
-      crs = 4326
-    ) %>% sf::st_transform(3857)
-    
-    ext_circle_proj <- sf::st_buffer(ext_pt_proj, dist = ext$buffer_radius_m)
-    
-    inside <- sf::st_intersects(occ_sf_proj, ext_circle_proj, sparse = FALSE)[, 1]
+    # ── Geodesic radius test ───────────────────────────────────────────────
+    # Membership is decided by TRUE great-circle distance, not by buffering in
+    # a projected CRS.
+    #
+    # Until 2026-09 this built the circle in EPSG:3857 and called st_buffer()
+    # with the radius in projected units. Web Mercator units are metres only at
+    # the equator: the scale factor is 1/cos(latitude), so a nominal 500 m
+    # radius covered ~500*cos(lat) m on the ground — about 211 m at 65°N, and
+    # the manuscript described it as geodesic. Reported by Reviewer 1,
+    # Ecological Informatics, 2026-09.
+    #
+    # Projecting is not the fix: an equal-AREA CRS such as EPSG:6933 is worse
+    # for this, because preserving area means distorting distance — a 500 m
+    # radius there becomes roughly a 244 m x 1025 m ellipse at 65°N. Only a
+    # geodesic distance, or a per-point equidistant projection, is correct.
+    #
+    # A cheap bounding-box prefilter keeps this exact and fast: st_distance()
+    # runs only on the handful of candidates, not on every occurrence in the
+    # dataset, for each of the extinction claims.
+    r_m   <- ext$buffer_radius_m
+    dlat  <- r_m / 111320
+    coslat <- max(cos(ext$latitude * pi / 180), 1e-6)
+    dlon  <- r_m / (111320 * coslat)
+
+    near_box <- abs(occurrences$latitude  - ext$latitude)  <= dlat &
+                (abs(occurrences$longitude - ext$longitude) <= dlon |
+                 # longitudes wrap: a point at -179.999 is adjacent to +179.999
+                 abs(abs(occurrences$longitude - ext$longitude) - 360) <= dlon)
+    near_box[is.na(near_box)] <- FALSE
+
+    inside <- rep(FALSE, nrow(occurrences))
+    if (any(near_box)) {
+      ext_pt <- sf::st_sfc(sf::st_point(c(ext$longitude, ext$latitude)), crs = 4326)
+      d_m <- as.numeric(sf::st_distance(occ_sf_wgs[near_box, ], ext_pt)[, 1])
+      inside[near_box] <- !is.na(d_m) & d_m <= r_m
+    }
     
     same_sp <- if (!is.null(ext$species) && !is.na(ext$species)) {
       occurrences$species == ext$species

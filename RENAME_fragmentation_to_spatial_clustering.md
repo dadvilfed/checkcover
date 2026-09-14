@@ -21,7 +21,16 @@ values are unchanged** — the same numbers come out, under new names.
 | species detailed report (Module 4) | `fragmentation_signal` | **`clustering_signal`** |
 
 Unchanged inside the block: `computed`, `status`, `n_clusters`, `cluster_sizes`,
-`mean_threshold_km`, `scope`.
+`scope`.
+
+> **Superseded 2026-09.** `mean_threshold_km` is gone, replaced by two keys that
+> say which quantity they hold: **`threshold_km`** (the absolute cut height the
+> clusters were computed under) and **`mean_pairwise_distance_km`** (a
+> descriptive statistic of the points). The single old key was accurate only
+> because the cut height used to *be* the mean pairwise distance — the defect
+> that made a single cluster unreachable by construction (Reviewer 1,
+> Ecological Informatics, 2026-09). Cluster values from v1.0–v1.2 were computed
+> under that rule and are not comparable with later versions.
 
 Readers accept **both** spellings for one release (`new %||% old`), so packages
 produced before the rename still parse.
