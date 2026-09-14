@@ -482,6 +482,21 @@ These are decisions, not accidents — changing one changes published numbers.
 > `CONFIG$clustering$threshold_km`, but the default is a placeholder pending an
 > ecologically justified value. Do not cite cluster counts until it is settled.
 
+**Clustering output keys changed with that fix.** The `spatial_clustering`
+block no longer carries `mean_threshold_km`. It was a single key holding two
+different things, and it was only ever accurate because the cut height happened
+to *be* the mean pairwise distance — the defect above. It is replaced by:
+
+| Key | Meaning |
+|---|---|
+| `threshold_km` | the absolute cut height the clusters were computed under |
+| `mean_pairwise_distance_km` | a descriptive statistic of the points; **not** the threshold |
+
+Consumers reading `mean_threshold_km` (the World of Crayfish species pages do)
+need updating. An earlier rename in the same block — `fragmentation_clusters` →
+`n_clusters`, and the `fragmentation` block → `spatial_clustering` — is already
+in effect; readers accept both spellings for one release.
+
 Darwin Core naming applies to the **exposed layer only** — output properties,
 JSON keys, export schema. Internal column names and values are unchanged, and
 `dwc:`/`dcterms:` prefixes appear only in a DwC-Archive `meta.xml`.
