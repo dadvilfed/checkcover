@@ -23,13 +23,22 @@ LABEL org.opencontainers.image.title="cheCkOVER" \
       org.opencontainers.image.source="https://github.com/dadvilfed/checkcover" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
-# Only the packages rocker/geospatial does not already carry. sf, terra, units
-# and lwgeom ship with the base image against its own GDAL build — reinstalling
-# them from source here would risk linking against a different stack.
+# Only the packages rocker/geospatial does not already carry. sf, units and
+# lwgeom ship with the base image against its own GDAL build — reinstalling them
+# from source here would risk linking against a different stack.
+#
+# Keep this list in step with REQUIRED_PACKAGES in config.R.
 RUN install2.r --error --skipinstalled --ncpus -1 \
       jsonlite digest glue progress future future.apply \
       worrms ritis wdpar geodata rnaturalearth rnaturalearthdata \
+      readxl openxlsx readtext \
  && rm -rf /tmp/downloaded_packages
+
+# ecoregions supplies the TEOW terrestrial-ecoregion polygons (Module 2C) and is
+# not on CRAN, so install2.r cannot fetch it. There is no local-file alternative
+# for TEOW, unlike FEOW, so a full run needs it.
+RUN R -e 'install.packages("remotes", repos = "https://cloud.r-project.org"); \
+          remotes::install_github("jeffreyhanson/ecoregions", upgrade = "never")'
 
 WORKDIR /work
 

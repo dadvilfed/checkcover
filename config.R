@@ -170,14 +170,36 @@ CONFIG <- list(
 )
 
 # Required R packages, available from CRAN.
+#
+# Every package here is actually used. Sixteen were removed in 2026-09 after
+# Supplement S1 was regenerated from source and showed they were never
+# referenced anywhere in the codebase -- not via `pkg::`, not via library(), and
+# not by a bare call to any of their exports: sp, terra, raster, ggplot2,
+# ggspatial, mapview, leaflet, htmlwidgets, DT, knitr, rmarkdown, yaml, httr,
+# xml2, rvest, docxtractr. Several are heavy (terra, raster, rmarkdown,
+# mapview), and load_packages() installs and ATTACHES everything in this vector,
+# so each one was install time and memory a new user paid for nothing.
+#
+# Regenerate the evidence at any time with:
+#   Rscript regenerate_supplement_S1.R
+# The packages sheet flags anything listed here but not referenced in the code.
+#
+# Two entries are uncalled on purpose and must stay:
+#   rnaturalearthdata - data backend that rnaturalearth loads
+#   lwgeom            - geometry backend registered with sf
+# NB rlang and stringi are called directly (rlang::sym in 11_temporal_delta.R,
+# stringi::stri_enc_isutf8 in 01_ingest.R) but were never declared -- they
+# resolved by accident as sub-dependencies of dplyr and stringr. Declared
+# explicitly now, because "it happens to be installed" is not a dependency.
 REQUIRED_PACKAGES <- c(
-  "sf", "sp", "raster", "terra", "dplyr", "tidyr", "jsonlite",
-  "httr", "xml2", "rvest", "rnaturalearth", "rnaturalearthdata",
-  "lwgeom", "units", "stringr", "lubridate", "ggplot2", "ggspatial",
-  "mapview", "leaflet", "htmlwidgets", "glue", "readxl", "openxlsx",
-  "yaml", "DT", "knitr", "rmarkdown", "worrms", "ritis", "wdpar",
-  "geodata", "digest", "future", "future.apply",
-  "readtext", "docxtractr", "progress"
+  "sf", "lwgeom", "units",
+  "dplyr", "tidyr", "stringr", "stringi", "lubridate", "glue", "readr",
+  "tibble", "rlang",
+  "jsonlite", "digest",
+  "rnaturalearth", "rnaturalearthdata", "geodata", "wdpar",
+  "worrms", "ritis",
+  "readxl", "openxlsx", "readtext",
+  "future", "future.apply", "progress"
 )
 
 # Packages that are NOT on CRAN. install.packages() cannot fetch these, so they
