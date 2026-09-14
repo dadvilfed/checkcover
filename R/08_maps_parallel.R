@@ -1,7 +1,36 @@
 #### MODULE 8: SCENARIO-AWARE MAP GENERATION (PARALLEL VERSION) ####
+#
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ UNFINISHED — NOT WIRED INTO THE PIPELINE. DO NOT CITE AS A FEATURE.       │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# This file is an ABANDONED EXPERIMENT, retained because the problem is still
+# open and we would rather keep the attempt than rediscover it. It is not in
+# `module_files` in checkcover_main.R, is never sourced, and
+# `generate_all_maps_par()` is never called. `CONFIG$reporting$parallel_maps`
+# is read by nothing. Every run is sequential, on every platform.
+#
+# Why it was abandoned: each worker needs its own copy of the HydroBASINS
+# layers, and the memory cost scaled with the number of workers rather than
+# being amortised across them. Runs died with allocation failures on the
+# server, and the configurations that survived were not meaningfully faster
+# than sequential — the work is dominated by geometry operations that were
+# already memory-bound, so adding workers mostly added copies.
+#
+# Making it work would need the reference layers shared rather than duplicated
+# (memory-mapped, or a worker-side cache keyed by bounding box), which is a
+# larger change than parallelising the loop.
+#
+# Reviewer 1 (Ecological Informatics, 2026-09) was right to call this out:
+# "The software pretends to provide parallel processing (off by default, but
+# with an undocumented option in config.R), and the scripts to support it are
+# in the repo, but it is not actually utilised by the script." The manuscript
+# and README must not claim parallel execution. See README "Parallelisation".
+#
+# Kept deliberately, not dead code awaiting deletion.
 
 #' Generate maps for all scenarios with proper styling
-#' Now supports parallel processing for species-level map generation
+#' @section Status: UNFINISHED. Never called; see the file header.
 #' @param scenario_table Scenario detection table
 #' @param result_indigenous Indigenous result object
 #' @param result_non_indigenous Non-indigenous result object

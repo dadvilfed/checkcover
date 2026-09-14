@@ -535,6 +535,55 @@ resolve_taxonomy <- function(species_list, module = "MODULE1_INGEST") {
   }
   
   pb$terminate()
+
+  # ── Report names WoRMS could not resolve ─────────────────────────────────
+  # Unresolved names used to be recorded in the status column and nothing else,
+  # so a run continued quietly with taxonomy missing for them (Reviewer 1,
+  # Ecological Informatics, 2026-09: "When unexpected scientific names are
+  # encountered within the dataset (e.g. author names in GBIF datasets), they
+  # are not parsed because they do not match with WORMS. The script just keeps
+  # going.")
+  #
+  # This is not fatal by design: an unresolved name keeps its occurrences and
+  # its metrics, and only loses the taxonomic hierarchy. But it is almost always
+  # a data problem worth fixing — an authorship string appended to the binomial,
+  # a subspecies WoRMS does not carry, or a typo — so it is now stated plainly.
+  st <- as.character(taxonomy_map$status)
+  not_found <- which(st == "not found")
+  errored   <- which(startsWith(st, "error:"))
+  n_bad     <- length(not_found) + length(errored)
+
+  if (n_bad > 0) {
+    pct <- 100 * n_bad / max(nrow(taxonomy_map), 1)
+    log_warn("WoRMS: %d of %d names unresolved (%.1f%%).",
+             n_bad, nrow(taxonomy_map), pct, module = module)
+
+    cat("\n")
+    cat("  [!] WoRMS could not resolve every scientific name\n")
+    cat(sprintf("      %d of %d names (%.1f%%) have no taxonomic hierarchy.\n",
+                n_bad, nrow(taxonomy_map), pct))
+    if (length(not_found) > 0)
+      cat(sprintf("      %d not found in WoRMS; %d failed with an API error.\n",
+                  length(not_found), length(errored)))
+    cat("      Occurrences of these species are still processed and still get\n")
+    cat("      metrics; only kingdom..genus are missing for them.\n")
+    cat("      The usual causes are an authorship string kept in the name field\n")
+    cat("      (common in GBIF exports, e.g. 'Astacus astacus (Linnaeus, 1758)'),\n")
+    cat("      a subspecies WoRMS does not carry, or a spelling variant.\n")
+
+    show <- head(taxonomy_map$original_name[c(not_found, errored)], 10)
+    cat("\n      Unresolved names:\n")
+    for (nm in show) cat(sprintf("        - %s\n", nm))
+    if (n_bad > length(show))
+      cat(sprintf("        ... and %d more (see the taxonomy table in the run directory)\n",
+                  n_bad - length(show)))
+    cat("\n")
+  } else {
+    log_info("WoRMS: all %d names resolved.", nrow(taxonomy_map), module = module)
+  }
+
+  attr(taxonomy_map, "unresolved_names") <-
+    taxonomy_map$original_name[c(not_found, errored)]
   taxonomy_map
 }
 

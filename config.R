@@ -74,7 +74,13 @@ CONFIG <- list(
   # 6. Reporting & Export
   reporting = list(
     formats = c("geojson", "kml"),
-    parallel_maps = FALSE  # Set TRUE on Linux server, FALSE on PC
+    # NO EFFECT. Parallel map generation is unfinished: R/08_maps_parallel.R
+    # exists but is never sourced or called, and nothing reads this setting.
+    # Every run is sequential. Kept so existing config files still load, and as
+    # a marker that the work is open. See R/08_maps_parallel.R for why the
+    # attempt was abandoned (per-worker copies of the HydroBASINS layers made it
+    # memory-bound rather than faster), and README "Parallelisation".
+    parallel_maps = FALSE  # inert
   ),
   
   # 7. Memory Management (CRITICAL FOR LARGE DATASETS)

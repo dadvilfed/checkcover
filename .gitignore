@@ -30,6 +30,12 @@ clean_occurrences*
 # pipeline needs, not occurrence data. Keep it.
 !WoC_canonical_country_continent.tsv
 
+# The demo dataset is deliberately public: 519 records, 4 species, every record
+# confidentialityLevel 0. Without this exception the WoC_*.tsv rule above
+# swallows it and the README points at a file that is not in the repository.
+!demo_data/
+!demo_data/**
+
 # --- Unreferenced binaries -------------------------------------------------
 # Not read by any module; keeping them out avoids shipping blobs of unclear
 # provenance. RollData.tsv is NOT listed: despite the misleading extension it is

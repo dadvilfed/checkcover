@@ -20,8 +20,12 @@ It was built for the [World of Crayfish](https://world.crayfish.ro) database
 - [Design principles](#design-principles)
 - [Installation](#installation)
 - [Reference data](#reference-data)
+- [Try it on the demo dataset first](#try-it-on-the-demo-dataset-first)
 - [Running the pipeline](#running-the-pipeline)
+  - [Configuration reference](#configuration-reference)
+  - [Parallelisation](#parallelisation)
 - [Versioning and change detection](#versioning-and-change-detection)
+- [Troubleshooting](#troubleshooting)
 - [Verification](#verification)
 - [Module map](#module-map)
 - [Conventions that matter](#conventions-that-matter)
@@ -48,6 +52,15 @@ Astacus_astacus/
 Run-level scaffolding lives in `<root>/<version>/checkover/` (manifest,
 fingerprints, index) — deliberately outside the species namespace so a
 consuming platform can treat every `Genus_species/` folder as a drop-in unit.
+
+The run directory also carries an audit of what was discarded during ingest:
+
+```
+ingest_validation_report.tsv   count and reason for every removed record
+ingest_dropped_records.tsv     identifiers of those records (no coordinates)
+```
+
+Spatial outputs are **GeoJSON and KML**. KMZ is not produced.
 
 ---
 
@@ -81,21 +94,80 @@ a biological determination.
 
 ## Installation
 
-```r
-install.packages(c(
-  "sf", "dplyr", "tidyr", "stringr", "jsonlite", "readr", "digest",
-  "rnaturalearth", "rnaturalearthdata", "geodata", "wdpar", "worrms",
-  "lwgeom", "units", "glue", "progress", "future", "future.apply"
-))
+cheCkOVER is a set of scripts, not an R package. There is nothing to
+`install.packages()` — you clone the repository and run the entry-point script
+from inside it.
+
+**1. Clone the repository.**
+
+```bash
+git clone https://github.com/dadvilfed/checkcover.git
+cd checkcover
 ```
 
-R ≥ 4.2 is recommended (developed and verified on 4.5.2). `sf` needs system
-GDAL/GEOS/PROJ.
+**2. Install the CRAN dependencies.** From an R session opened *in that
+directory*:
 
-**Resources.** A full 124k-record / 676-species run needs roughly **32 GB RAM**
-and takes **~3 hours** on 8 cores; peak RSS observed is ~22–32 GB. It will not
-run on a typical laptop. Lower `CONFIG$memory$batch_size` for smaller machines,
-or run a subset.
+```r
+source("config.R")
+install.packages(REQUIRED_PACKAGES)
+```
+
+`REQUIRED_PACKAGES` in `config.R` is the authoritative list — installing from it
+cannot drift out of step with what the code loads.
+
+**3. Install the packages that are not on CRAN.** `install.packages()` cannot
+fetch these and will fail with "package is not available":
+
+```r
+install.packages("remotes")
+remotes::install_github("jeffreyhanson/ecoregions")
+```
+
+`ecoregions` supplies the TEOW terrestrial-ecoregion polygons used by Module 2C.
+It is **required** — unlike FEOW, TEOW has no local-file alternative.
+
+Optionally, `remotes::install_github("mhpob/feowR")` provides an alternative
+source for freshwater ecoregions; see `CONFIG$spatial$feow_source` below. The
+default (`"local"`) does not need it.
+
+**4. Check your setup before running anything.**
+
+```r
+source("config.R"); source("R/00_logging.R"); source("R/00_helpers.R")
+source("R/00_dwc_fields.R"); source("R/00_preflight.R")
+preflight_check(CONFIG, strict = FALSE)
+```
+
+This verifies every input, lookup table, reference layer, package and output
+path, and reports **everything** that is missing in one pass. The full pipeline
+runs the same check automatically and refuses to start if anything blocking is
+absent, so a broken setup costs one run to diagnose rather than one run per
+missing file.
+
+R ≥ 4.2 is recommended (developed and verified on 4.5.2). `sf` needs system
+GDAL/GEOS/PROJ. On Ubuntu: `apt install libgdal-dev libgeos-dev libproj-dev
+libudunits2-dev`. The `Dockerfile` in this repository provides a working stack
+if you would rather not build one.
+
+### Resources and runtime
+
+A full 124k-record / 676-species run needs roughly **32 GB RAM**; peak RSS
+observed is ~22–32 GB. It will not run on a typical laptop. Lower
+`CONFIG$memory$batch_size` for smaller machines, or run a subset.
+
+**Runtime is dominated by the protected-area step.** Earlier versions of this
+README quoted ~3 hours for a full run; that figure predated a change in how
+WDPA geometries were cleaned and was not achievable with the shipped settings.
+`wdpar::wdpa_clean()` defaults `erase_overlaps = TRUE`, an operation the wdpar
+authors themselves recommend disabling for larger datasets, and with it enabled
+a **four-species** dataset can take the better part of a day.
+
+`CONFIG$spatial$wdpa_erase_overlaps` now exposes it and defaults to `FALSE`.
+With that default, a full production run took **~29 hours** end to end
+(2026-08, 677 species, 8 cores), of which ~24 hours was HydroBASINS assignment
+and ~1.7 hours WDPA. Budget accordingly: this is an overnight job, not a
+coffee-break one. A four-species demo run takes minutes.
 
 ---
 
@@ -122,25 +194,110 @@ serve as manuscript supplements, hence the prefixed filenames — set
 
 ---
 
-## Running the pipeline
+## Try it on the demo dataset first
 
-Edit `config.R`:
+A 519-record, 4-species extract from the Ponto-Caspian crayfish data ships in
+`demo_data/WoC_demo_Pontastacus.tsv` (all records are `confidentialityLevel 0`,
+i.e. public). It exercises every branch — both population streams, a type
+locality, an extinction claim — and runs in minutes.
 
 ```r
-CONFIG$input_file        <- "WoC_1_0.tsv"   # occurrence export
-CONFIG$framework_version <- "1.0"           # drives <root>/<version>/
-CONFIG$root_output_dir   <- "checkover_output"
+CONFIG$input_file        <- "demo_data/WoC_demo_Pontastacus.tsv"
+CONFIG$framework_version <- "0.1"
 ```
-
-Then:
 
 ```bash
 Rscript checkcover_main.R
 ```
 
+Expected: 519 records in, 15 removed as duplicates, **504 retained across 4
+species** — 252 indigenous, 252 non-indigenous. The reference layers are still
+required, so run `preflight_check()` first.
+
+---
+
+## Running the pipeline
+
+Edit `config.R`, then `Rscript checkcover_main.R`.
+
 The run refuses to start if `framework_version` already has output on disk —
 the usual guard against silently overwriting a published version. Archive or
 bump the version.
+
+### Configuration reference
+
+`config.R` is commented throughout; this is the summary. Everything not listed
+has a working default.
+
+**Paths and identity**
+
+| Setting | Default | What it does |
+|---|---|---|
+| `input_file` | `"WoC_1_1.tsv"` | Occurrence export to process. |
+| `root_output_dir` | `"checkover_output"` | Everything is written under here. |
+| `framework_version` | `"1.1"` | Output folder `<root>/<version>/`. Must match `^\d+\.\d+$`. |
+| `version` | `"production"` | Run id. **Change it to force a re-ingest** — reusing it resumes from cached data. |
+
+**Reference layers** (`CONFIG$spatial`)
+
+| Setting | Default | What it does |
+|---|---|---|
+| `hydro_dir` | `"spatial_data/hydrobasins"` | Where you unpacked HydroBASINS. |
+| `hydro_files` | `lev06/08/10` | Filenames per level; all three required. |
+| `hydro_bbox` | `50` | Bounding-box expansion (km) when cropping basins. |
+| `feow_source` | `"local"` | `"local"` (your shapefile), `"feowR"` (the package), or `"auto"`. |
+| `feow_path` | `spatial_data/feow/...` | Used when `feow_source` is `"local"`. |
+| `wdpa_km` | `2` | Buffer (km) around protected areas. |
+| `wdpa_erase_overlaps` | `FALSE` | Passed to `wdpa_clean()`. **The single largest runtime lever** — see Resources. |
+| `gadm_version`, `ne_scale` | `"4.1"`, `"medium"` | GADM release and Natural Earth resolution. |
+
+**Lookup tables**
+
+| Setting | Default |
+|---|---|
+| `vernaculars$path` | `"(Table_S2)vernacular_names_wide.tsv"` |
+| `dictionaries$feow` | `"(Table_S4)ecoregions_list.tsv"` |
+| `dictionaries$hydrobasins` | `"Table_S3.tsv"` |
+
+The parenthesised prefixes are part of the filenames — these tables double as
+manuscript supplements.
+
+**Analysis**
+
+| Setting | Default | What it does |
+|---|---|---|
+| `clustering$threshold_km` | `10` | Separation above which occurrences are different clusters. **Provisional** — see Conventions. |
+| `clustering$linkage` | `"single"` | `"single"` asks "are there gaps wider than the threshold?". |
+| `temporal$enabled` | `TRUE` | Per-species versioned temporal tracking (Modules 11–13). |
+| `temporal$major_bump` | `FALSE` | Force v1.x → v2.0 instead of v1.x+1. |
+| `force_reprocess` | `FALSE` | `TRUE`, or a vector of species, to rebuild despite unchanged data. See below. |
+
+**Resources**
+
+| Setting | Default | What it does |
+|---|---|---|
+| `memory$batch_size` | `5` | Species per batch. Lower it on smaller machines. |
+| `memory$max_worker_memory` | `1500` | MB per worker. |
+| `reporting$formats` | `c("geojson","kml")` | Map output formats. KMZ is **not** produced. |
+| `parallel$force_sequential` | `TRUE` | See Parallelisation. |
+| `reporting$parallel_maps` | `FALSE` | **Inert.** See Parallelisation. |
+
+### Parallelisation
+
+**cheCkOVER does not run in parallel.** Every run is sequential on every
+platform, regardless of `parallel$force_sequential`, `parallel$workers` or
+`reporting$parallel_maps` — nothing reads those settings.
+
+`R/08_maps_parallel.R` exists but is never sourced and never called. It is an
+unfinished experiment, kept deliberately because the problem is still open.
+Each worker needed its own copy of the HydroBASINS layers, so memory cost scaled
+with worker count instead of being amortised; runs died with allocation
+failures, and the configurations that survived were not meaningfully faster,
+because the work is dominated by geometry operations that were already
+memory-bound. Making it work needs the reference layers shared rather than
+duplicated, which is a larger change than parallelising the loop.
+
+Treat parallel execution as future work, not a feature.
 
 ### Input format
 
@@ -197,6 +354,52 @@ occurrences are identical, so no spurious per-species versions are created.
 
 Use it for code-only changes, then set it back to `FALSE`. Data changes need no
 override.
+
+---
+
+## Troubleshooting
+
+Run `preflight_check(CONFIG, strict = FALSE)` first — it catches most of these
+before anything is processed.
+
+**`package 'ecoregions' is not available`** — it is not on CRAN. Install it with
+`remotes::install_github("jeffreyhanson/ecoregions")`. It is required: TEOW has
+no local-file alternative.
+
+**`Vernacular file path is invalid`** — `CONFIG$vernaculars$path` must name a
+file that exists. The shipped table is `(Table_S2)vernacular_names_wide.tsv`;
+the parenthesised prefix is part of the filename.
+
+**The run produced empty outputs and no obvious error** — almost always a
+missing `establishmentMeans`. cheCkOVER splits occurrences into indigenous and
+non-indigenous streams, and a record with neither value enters neither. The run
+now prints how many records this affects; if it is all of them, nothing
+meaningful is produced. GBIF exports frequently carry the column but leave it
+empty. `occurrenceOrigin` (native / type locality / introduced / invasive /
+cryptogenic) is a **different field** and is not a substitute.
+
+**Records disappeared between input and output** — read
+`ingest_validation_report.tsv` in the run directory. It gives the count and
+reason for every removal, and `ingest_dropped_records.tsv` lists the
+identifiers. Note that de-duplication keys on species + coordinates + year, so
+two records of the same occurrence from different sources collapse to one.
+
+**Some species have no taxonomic hierarchy** — WoRMS could not resolve those
+names; the run reports which. Occurrences are still processed and still get
+metrics. The usual cause is an authorship string left in the name field (common
+in GBIF exports: `Astacus astacus (Linnaeus, 1758)` rather than
+`Astacus astacus`).
+
+**It has been running for hours** — check `CONFIG$spatial$wdpa_erase_overlaps`
+is `FALSE`, and see Resources for what a realistic runtime looks like. This is
+an overnight job at full scale.
+
+**`framework_version already has output on disk`** — deliberate. Bump
+`CONFIG$framework_version` or archive the existing folder.
+
+**Nothing was reprocessed even though I changed the code** — change detection
+fingerprints the *data*, not the code. Set `CONFIG$force_reprocess <- TRUE`, or
+name specific species. See Forcing a reprocess.
 
 ---
 
@@ -261,11 +464,23 @@ These are decisions, not accidents — changing one changes published numbers.
 | Cosmopolitan | a continent counts only with **≥ 5 records and ≥ 5 %** of the species' labelled records; blanks excluded |
 | Non-indigenous category | `< 3` records ⇒ **local**, not widespread |
 | post-2000 | strictly `year > 2000` |
-| Extinction mask | records within **500 m** of an extinction event and predating it are suppressed |
+| AOO | occupied cells on a **true equal-area 2 × 2 km lattice** (EPSG:6933), 4 km² each |
+| Extinction mask | records within **500 m geodesic** of an extinction event and predating it are suppressed |
 | Zero active records | terminal state: `status = Extinct`, AOO 0, EOO `NA`, no basins, mandatory disclaimer |
 | Nearest-land snap | capped at **100 km**, and rejected if the continent appears in no other record of that species |
 | Continent vocabulary | exactly six values; `Australia` is a country ⇒ `Oceania` |
 | Spatial clustering | descriptive signal only — the term *fragmentation* is reserved for downstream connectivity work |
+| Clustering threshold | **provisional at 10 km** — a configuration choice, not a workflow property; recorded in every output |
+
+> **Clustering results before v1.3 are not usable.** Up to and including v1.2 the
+> cut height was the *mean pairwise distance of the points themselves*. With
+> complete linkage the root merge sits at the maximum pairwise distance, and the
+> mean is always below it, so a single cluster was unreachable by construction:
+> every species with enough coordinates scored more than one cluster (494 of 494
+> in v1.2), and the count tracked sample size rather than spatial structure.
+> The threshold is now absolute and configurable via
+> `CONFIG$clustering$threshold_km`, but the default is a placeholder pending an
+> ecologically justified value. Do not cite cluster counts until it is settled.
 
 Darwin Core naming applies to the **exposed layer only** — output properties,
 JSON keys, export schema. Internal column names and values are unchanged, and
