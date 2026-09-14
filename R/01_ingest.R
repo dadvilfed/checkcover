@@ -621,15 +621,51 @@ ingest_clean <- function(file_path, output_dir = "checkover_output",
     # exactly what it discarded and why (Reviewer 1, 2026-09).
     n_mapped <- nrow(clean_data)
 
-    # NB de-duplication keys on species + coordinates + year, NOT on source.
-    # The manuscript (lines 151-152) says source is part of the key; it is not.
-    # Two records of the same occurrence from different publications collapse to
-    # one, and the survivor's citation is the only one carried into the
-    # bibliography. Reported by Reviewer 1; changing the key would change every
-    # record count in the paper, so it is left alone and reported honestly here.
+    # ── Consolidation, with every citation retained ─────────────────────────
+    # De-duplication keys on species + coordinates + year, NOT on source. Two
+    # records of one occurrence at the same place and time genuinely are
+    # duplicates however many publications reported them, so the key is right
+    # and record counts do not inflate.
+    #
+    # What was wrong was discarding the losers' citations: only the surviving
+    # row's source reached the bibliography, so bibliographic provenance was
+    # silently lost — a real defect in a workflow whose central claim is
+    # provenance, not the wording problem Reviewer 1 took it for (lines 151-152).
+    #
+    # Every distinct citation, DOI and URL across the collapsed group is now
+    # carried onto the survivor in *_all columns, pipe-joined. Module 7 expands
+    # those back out, so a consolidated record contributes to the reference
+    # count of each source that reported it (Lucian, 2026-09).
+    dup_key <- paste(clean_data$species, clean_data$longitude,
+                     clean_data$latitude, clean_data$year, sep = "\r")
+
+    .join_unique <- function(x) {
+      v <- trimws(as.character(x))
+      v <- v[!is.na(v) & nzchar(v)]
+      if (!length(v)) NA_character_ else paste(unique(v), collapse = " | ")
+    }
+    .by_group <- function(col) {
+      if (!col %in% names(clean_data)) return(rep(NA_character_, nrow(clean_data)))
+      unname(vapply(split(clean_data[[col]], dup_key), .join_unique,
+                    character(1))[dup_key])
+    }
+
+    clean_data$citation_all <- .by_group("citation")
+    clean_data$doi_all      <- .by_group("doi")
+    clean_data$url_all      <- .by_group("url")
+    clean_data$n_sources    <- lengths(strsplit(
+      ifelse(is.na(clean_data$citation_all), "", clean_data$citation_all),
+      "\\s*\\|\\s*"))
+
     clean_data <- clean_data %>%
       dplyr::distinct(species, longitude, latitude, year, .keep_all = TRUE)
     n_dedup <- n_mapped - nrow(clean_data)
+
+    n_multi_src <- sum(clean_data$n_sources > 1L, na.rm = TRUE)
+    if (n_multi_src > 0) {
+      log_info("Consolidation retained multiple citations on %d record(s).",
+               n_multi_src, module = module)
+    }
 
     clean_data <- clean_data %>%
       dplyr::mutate(

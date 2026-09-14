@@ -88,7 +88,11 @@ generate_all_citations <- function(scenario_table,
     
     # ── Dataset signature ──
     
-    cols_needed <- c("species", "record_id", "citation", "doi", "url", "is_extinct")
+    # citation_all carries every source that reported a consolidated occurrence
+    # (see 01_ingest.R). It must be in this list or .safe_cols() drops it before
+    # the expansion below can see it, and the retained citations are lost again.
+    cols_needed <- c("species", "record_id", "citation", "doi", "url", "is_extinct",
+                     "citation_all", "doi_all", "url_all")
     .safe_cols <- function(df, cols) {
       present <- intersect(cols, names(df))
       df[, present, drop = FALSE]
@@ -167,7 +171,28 @@ generate_all_citations <- function(scenario_table,
       
       if (!"record_id"  %in% names(sp_data)) sp_data$record_id  <- NA_character_
       if (!"is_extinct" %in% names(sp_data)) sp_data$is_extinct <- FALSE
-      
+
+      # ── Expand consolidated citations ───────────────────────────────────
+      # De-duplication collapses records of one occurrence reported by several
+      # publications, carrying every citation onto the survivor in the *_all
+      # columns (see 01_ingest.R). Expanding them here, one row per distinct
+      # source, means the bibliography counts each publication that reported an
+      # occurrence rather than only whichever row happened to survive -- without
+      # changing any record count, because the expansion is local to this module
+      # (Lucian, 2026-09).
+      if ("citation_all" %in% names(sp_data) &&
+          any(grepl("|", sp_data$citation_all, fixed = TRUE), na.rm = TRUE)) {
+        parts <- strsplit(ifelse(is.na(sp_data$citation_all), "",
+                                 sp_data$citation_all), "\\s*\\|\\s*")
+        reps  <- pmax(lengths(parts), 1L)
+        n_before <- nrow(sp_data)
+        sp_data <- sp_data[rep(seq_len(nrow(sp_data)), reps), , drop = FALSE]
+        flat <- unlist(lapply(parts, function(p) if (length(p)) p else NA_character_))
+        sp_data$citation <- flat
+        log_info("  %s: expanded %d consolidated record(s) to %d citation row(s)",
+                 sp, n_before, nrow(sp_data), module = module)
+      }
+
       sp_data$citation <- .str_clean(sp_data$citation)
       sp_data$doi      <- .str_clean(sp_data$doi)
       sp_data$url      <- .str_clean(sp_data$url)

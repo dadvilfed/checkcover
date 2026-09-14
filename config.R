@@ -141,7 +141,23 @@ CONFIG <- list(
   # linkage: "single" asks "are there gaps wider than the threshold?", which is
   # the connectivity question this metric is for. "complete" constrains cluster
   # diameter instead and splits long river systems purely because they are long.
+  # method: "basin" (default) or "euclidean".
+  #
+  # Euclidean distance is the wrong metric for freshwater crayfish: two
+  # populations 5 km apart in separate catchments are functionally more
+  # disconnected than two 50 km apart along the same river, and no purely
+  # spatial threshold can express that (Lucian, 2026-09).
+  #
+  # "basin" connects records sharing a HydroBASINS unit regardless of distance,
+  # and separates records in different units unless threshold_km links them. The
+  # basin level is the one Module 2F already assigns per distributional category
+  # (L10 endemic, L08 regional, L06 cosmopolitan), so resolution follows range
+  # extent. It requires the hydrobasin column, which is why Module 3B now runs
+  # after spatial enrichment rather than before it.
+  #
+  # "euclidean" is the distance-only fallback, retained and configurable.
   clustering = list(
+    method       = "basin",
     threshold_km = 10,
     linkage      = "single"
   ),

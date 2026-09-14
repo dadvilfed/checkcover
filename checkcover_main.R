@@ -589,14 +589,6 @@ if (run_env$status %in% c("NEW", "RESUME")) {
     output_dir = run_env$run_dir
   )
   
-  # Module 3B: Fragmentation Analysis (endemic/regional only)
-  cat("\n[MODULE 3B] Analyzing fragmentation (endemic/regional only)...\n")
-  result_indigenous <- analyze_fragmentation(
-    result_indigenous,
-    output_dir = run_env$run_dir,
-    category_filter = c("endemic", "regional")  # Skip cosmopolitan
-  )
-  
   # Module 3C: Spatial Enrichment
   cat("\n[MODULE 3C] Enriching with spatial layers...\n")
   result_indigenous <- enrich_indigenous_spatial(
@@ -606,7 +598,21 @@ if (run_env$status %in% c("NEW", "RESUME")) {
     config = CONFIG,
     hydrobasin_names = HYDROBASIN_NAMES
   )
-  
+
+  # Module 3B: Spatial clustering (endemic/regional only)
+  #
+  # Runs AFTER enrichment, not before. Basin-aware clustering (Lucian, 2026-09)
+  # needs the hydrobasin column, which Module 3C assigns — so while clustering
+  # ran first, the basin data it now depends on did not yet exist. Nothing
+  # between the two consumed the clustering result: 3C does not read it, and the
+  # reports in 3D run after both.
+  cat("\n[MODULE 3B] Analyzing spatial clustering (endemic/regional only)...\n")
+  result_indigenous <- analyze_fragmentation(
+    result_indigenous,
+    output_dir = run_env$run_dir,
+    category_filter = c("endemic", "regional")  # Skip cosmopolitan
+  )
+
   # Module 3D: Generate Reports
   cat("\n[MODULE 3D] Generating indigenous reports...\n")
   indigenous_reports <- generate_indigenous_reports(

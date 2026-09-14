@@ -10,6 +10,7 @@
 #'   than the threshold?"; see the note at the cutree() call before changing it.
 analyze_fragmentation <- function(result, output_dir, category_filter = NULL,
                                   threshold_km = NULL,
+                                  method = NULL,
                                   linkage = NULL) {
   module <- "MODULE1D_FRAG"
 
@@ -17,12 +18,14 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL,
   cfg <- if (exists("CONFIG", envir = globalenv())) get("CONFIG", envir = globalenv()) else NULL
   threshold_km <- threshold_km %||% cfg$clustering$threshold_km %||% 10
   clustering_linkage <- linkage %||% cfg$clustering$linkage %||% "single"
+  clustering_method  <- method  %||% cfg$clustering$method  %||% "basin"
+  clustering_method  <- match.arg(clustering_method, c("basin", "euclidean"))
   threshold_m  <- threshold_km * 1000
 
   with_log_section(module, {
     log_info("=== MODULE 1D: SPATIAL CLUSTERING ANALYSIS ===", module = module)
-    log_info("Clustering threshold: %.2f km (linkage: %s)",
-             threshold_km, clustering_linkage, module = module)
+    log_info("Clustering: method=%s, threshold=%.2f km, linkage=%s",
+             clustering_method, threshold_km, clustering_linkage, module = module)
     
     cd <- result$clean_data
     
@@ -85,7 +88,12 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL,
         n_clusters = NA_integer_,
         cluster_sizes_n = NA_character_,
         mean_distance_km = NA_real_,
-        threshold_km = threshold_km
+        threshold_km = threshold_km,
+        # Recorded per species, because whether basin connectivity was actually
+        # applied depends on the species having hydrobasin assignments.
+        method = clustering_method,
+        basin_connectivity = NA,
+        n_basin_units = NA_integer_
       )
       
       # Skip cosmopolitan
@@ -113,9 +121,51 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL,
           pts_ea <- sf::st_transform(pts_sf, ea_crs)
 
           # Distance matrix (metres, equal-area CRS)
-          dist_mat <- sf::st_distance(pts_ea)
-          dist_vals <- as.numeric(dist_mat[lower.tri(dist_mat)])
+          dist_mat <- matrix(as.numeric(sf::st_distance(pts_ea)),
+                             nrow = nrow(pts_ea))
+          dist_vals <- dist_mat[lower.tri(dist_mat)]
           d_mean <- mean(dist_vals, na.rm = TRUE)
+
+          # ── Basin-aware connectivity (Lucian, 2026-09) ────────────────────
+          # Euclidean distance is the wrong metric for freshwater crayfish. Two
+          # populations 5 km apart in separate catchments are more disconnected
+          # than two 50 km apart along one river, and no purely spatial
+          # threshold can express that.
+          #
+          # Records sharing a HydroBASINS unit are therefore connected
+          # regardless of distance; records in different units are separate
+          # unless the distance rule below links them. Setting the pairwise
+          # distance to zero for same-basin pairs and cutting a SINGLE-linkage
+          # tree at the threshold expresses exactly that: single linkage merges
+          # on any pair within the cut height, so the result is the connected
+          # components of "same basin OR within threshold_km".
+          #
+          # The basin level is whatever Module 2F already assigned for this
+          # species' category (L10 endemic, L08 regional, L06 cosmopolitan), so
+          # resolution matches range extent without a second rule here.
+          basin_used <- FALSE
+          n_basin_units <- NA_integer_
+          if (identical(clustering_method, "basin") &&
+              "hydrobasin" %in% names(valid_pts)) {
+            hb <- as.character(valid_pts$hydrobasin)
+            sets <- strsplit(ifelse(is.na(hb), "", hb), "\\s*\\|\\s*")
+            sets <- lapply(sets, function(s) s[nzchar(s)])
+            units <- unique(unlist(sets))
+            if (length(units) > 0) {
+              for (u in units) {
+                ix <- which(vapply(sets, function(s) u %in% s, logical(1)))
+                if (length(ix) > 1L) dist_mat[ix, ix] <- 0
+              }
+              basin_used <- TRUE
+              n_basin_units <- length(units)
+            }
+          }
+          if (identical(clustering_method, "basin") && !basin_used) {
+            # Never silently fall back to a different metric: a package must not
+            # claim basin-aware clustering it did not perform.
+            log_warn("  %s: no hydrobasin assignments — clustering by distance only.",
+                     sp, module = module)
+          }
 
           # ── Spatial clustering ─────────────────────────────────────────────
           # The cut height MUST be an absolute distance, never a statistic of
@@ -137,7 +187,9 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL,
           # "are there gaps wider than the threshold?", which is a connectivity
           # property. Complete linkage constrains cluster DIAMETER instead, so
           # it splits a long river system into many clusters purely because it
-          # is long — conflating extent with fragmentation.
+          # is long — conflating extent with fragmentation. Single linkage is
+          # also what makes the same-basin-distance-zero trick above resolve to
+          # connected components; complete linkage would not.
           clusters <- cutree(
             hclust(as.dist(dist_mat), method = clustering_linkage),
             h = threshold_m
@@ -157,6 +209,8 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL,
           res$scope <- "endemic_or_regional"
           res$mean_distance_km <- round(d_mean / 1000, 2)
           res$threshold_km     <- threshold_km
+          res$basin_connectivity <- basin_used
+          res$n_basin_units      <- n_basin_units
           res$n_clusters <- n_clust
           res$cluster_sizes_n <- paste(size_strs, collapse = ", ")
           res$status <- if (n_clust > 1) "detected" else "none_detected"
@@ -181,13 +235,43 @@ analyze_fragmentation <- function(result, output_dir, category_filter = NULL,
     result$fragmentation <- frag_df
     result$files_created <- c(result$files_created %||% character(), out_tsv)
     
-    # Log summary
+    # ── Summary ───────────────────────────────────────────────────────────
+    # The single-cluster count is reported explicitly and prominently. Under
+    # the rule in force up to v1.2 it was ZERO by construction, for every
+    # species, and that went unquestioned. If it is ever zero again on a real
+    # cohort, treat it as a symptom rather than a result (Lucian, 2026-09).
     status_counts <- table(frag_df$status)
-    log_info("Fragmentation summary:", module = module)
-    log_info("  Detected: %d species", status_counts["detected"] %||% 0, module = module)
-    log_info("  None detected: %d species", status_counts["none_detected"] %||% 0, module = module)
-    log_info("  Not computed: %d species", sum(status_counts[!names(status_counts) %in% c("detected", "none_detected")]), module = module)
-    
+    computed  <- frag_df[isTRUE(frag_df$computed) | frag_df$computed %in% TRUE, , drop = FALSE]
+    n_one     <- sum(computed$n_clusters == 1L, na.rm = TRUE)
+    n_multi   <- sum(computed$n_clusters >  1L, na.rm = TRUE)
+    n_basin   <- sum(computed$basin_connectivity %in% TRUE)
+
+    log_info("Spatial clustering summary:", module = module)
+    log_info("  Computed: %d species (%d with basin connectivity applied)",
+             nrow(computed), n_basin, module = module)
+    log_info("  Single cluster: %d species", n_one, module = module)
+    log_info("  Multiple clusters: %d species", n_multi, module = module)
+    log_info("  Not computed: %d species",
+             sum(status_counts[!names(status_counts) %in% c("detected", "none_detected")]),
+             module = module)
+
+    cat("\n")
+    cat("  Spatial clustering\n")
+    cat("  ------------------\n")
+    cat(sprintf("  method                    %s (threshold %.2f km, %s linkage)\n",
+                clustering_method, threshold_km, clustering_linkage))
+    cat(sprintf("  computed                  %d species\n", nrow(computed)))
+    cat(sprintf("    basin connectivity used %d\n", n_basin))
+    cat(sprintf("    single cluster          %d\n", n_one))
+    cat(sprintf("    multiple clusters       %d\n", n_multi))
+    if (nrow(computed) > 0 && n_one == 0) {
+      cat("\n")
+      cat("  [!] NO species resolved into a single cluster.\n")
+      cat("      Up to v1.2 that outcome was guaranteed by the formula rather\n")
+      cat("      than observed in the data. Verify before reporting it.\n")
+    }
+    cat("\n")
+
     return(result)
   })
 }

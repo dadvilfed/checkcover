@@ -266,8 +266,9 @@ manuscript supplements.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `clustering$threshold_km` | `10` | Separation above which occurrences are different clusters. **Provisional** — see Conventions. |
-| `clustering$linkage` | `"single"` | `"single"` asks "are there gaps wider than the threshold?". |
+| `clustering$method` | `"basin"` | `"basin"` connects records sharing a HydroBASINS unit; `"euclidean"` is the distance-only fallback. |
+| `clustering$threshold_km` | `10` | Separation above which records in *different* basins are separate clusters. **Provisional** — see Conventions. |
+| `clustering$linkage` | `"single"` | Required for `"basin"`, not merely preferred — see Conventions. |
 | `temporal$enabled` | `TRUE` | Per-species versioned temporal tracking (Modules 11–13). |
 | `temporal$major_bump` | `FALSE` | Force v1.x → v2.0 instead of v1.x+1. |
 | `force_reprocess` | `FALSE` | `TRUE`, or a vector of species, to rebuild despite unchanged data. See below. |
@@ -470,7 +471,10 @@ These are decisions, not accidents — changing one changes published numbers.
 | Nearest-land snap | capped at **100 km**, and rejected if the continent appears in no other record of that species |
 | Continent vocabulary | exactly six values; `Australia` is a country ⇒ `Oceania` |
 | Spatial clustering | descriptive signal only — the term *fragmentation* is reserved for downstream connectivity work |
-| Clustering threshold | **provisional at 10 km** — a configuration choice, not a workflow property; recorded in every output |
+| Clustering | **basin-aware**: records sharing a HydroBASINS unit are connected regardless of distance; different units are separate unless within the threshold |
+| Clustering basin level | the level already assigned per category — L10 endemic, L08 regional, L06 cosmopolitan |
+| Clustering threshold | **provisional at 10 km**, for the between-basin rule only — a configuration choice, not a workflow property; recorded in every output |
+| De-duplication | species + coordinates + year. **All** source citations of the collapsed group are retained in `citation_all` |
 
 > **Clustering results before v1.3 are not usable.** Up to and including v1.2 the
 > cut height was the *mean pairwise distance of the points themselves*. With
