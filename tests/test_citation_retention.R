@@ -126,6 +126,24 @@ if (length(jf2)) {
      "without citation_all the bibliography loses sources (the defect)")
 }
 
+# ---- the geo-narrative's bibliography must see them too ----
+# Module 7 was updated to expand citation_all; the narrative's bibliography
+# section was not, and kept reading the survivor-only `citation` column. The two
+# representations in one package then disagreed on how many sources exist.
+src <- readLines("R/10_canonical_narratives.R", warn = FALSE)
+i1 <- grep("^\\.narrative_sources <- function", src)[1]
+i2 <- grep("^\\.freq_table_multi <- function", src)[1]
+i2 <- max(grep("^#'", src[seq_len(i2 - 1)])[1], i1 + 1)
+blk_end <- which(src == "}" & seq_along(src) > i1)[1]
+eval(parse(text = paste(src[i1:blk_end], collapse = "\n")))
+
+cites <- .narrative_sources(con, "citation")
+ok(setequal(unique(cites), c("Smith 1999", "Jones 2003", "Brown 2010", "Solo 2020")),
+   "narrative bibliography sees all four sources, not just survivors")
+ok(length(unique(.narrative_sources(no_all, "citation"))) == 2,
+   "without citation_all it falls back to the survivor column (pre-change data)")
+ok(length(.narrative_sources(NULL, "citation")) == 0, "NULL branch -> no sources")
+
 unlink(c(out, out2), recursive = TRUE)
 cat(sprintf("\n[test_citation_retention] %d passed, %d failed\n", pass, fail))
 quit(status = if (fail > 0) 1 else 0)

@@ -375,6 +375,25 @@ generate_canonical_narratives <- function(scenario_table,
   data.frame(value = names(tb), n = as.integer(tb), stringsAsFactors = FALSE)
 }
 
+#' Every source value for a population branch, consolidated sources included.
+#'
+#' Prefers the `<field>_all` column written by de-duplication, which holds every
+#' distinct source of a collapsed occurrence pipe-joined, and falls back to the
+#' single-valued column for data produced before that change.
+#'
+#' @param d Branch data frame (sp_ind / sp_nind), or NULL.
+#' @param field "citation" or "doi".
+#' @return Character vector of individual source values (may repeat).
+.narrative_sources <- function(d, field) {
+  if (is.null(d) || nrow(d) == 0L) return(character(0))
+  all_col <- paste0(field, "_all")
+  x <- if (all_col %in% names(d)) d[[all_col]] else d[[field]]
+  if (is.null(x)) return(character(0))
+  x <- unlist(strsplit(as.character(x[!is.na(x)]), "\\s*\\|\\s*"))
+  x <- trimws(x)
+  x[nzchar(x)]
+}
+
 #' Frequency table over a PIPE-JOINED multi-value column.
 #'
 #' Several enrichment columns hold every match for a record, joined with " | " —
@@ -1265,11 +1284,18 @@ generate_canonical_narratives <- function(scenario_table,
            "; low-accuracy: ", n_low_acc, ")")
   else "N/A"
   
-  # Bibliography — DOIs and citations from raw data
-  all_doi  <- c(if (!is.null(sp_ind))  sp_ind$doi      else character(0),
-                if (!is.null(sp_nind)) sp_nind$doi      else character(0))
-  all_cite <- c(if (!is.null(sp_ind))  sp_ind$citation  else character(0),
-                if (!is.null(sp_nind)) sp_nind$citation else character(0))
+  # Bibliography — DOIs and citations from raw data.
+  #
+  # Reads the *_all columns, not citation/doi. De-duplication (01_ingest.R,
+  # 2026-09) keeps every source of a consolidated occurrence in citation_all and
+  # doi_all, while citation/doi hold only the surviving row's value. Module 7 was
+  # updated to expand them; this section was not, so the narrative's reference
+  # count dropped exactly the consolidated sources the change existed to keep,
+  # and disagreed with the bibliography files in the same package.
+  all_doi  <- c(.narrative_sources(sp_ind,  "doi"),
+                .narrative_sources(sp_nind, "doi"))
+  all_cite <- c(.narrative_sources(sp_ind,  "citation"),
+                .narrative_sources(sp_nind, "citation"))
   valid_doi  <- sort(unique(all_doi [!is.na(all_doi)  & nzchar(all_doi)]))
   valid_cite <- sort(unique(all_cite[!is.na(all_cite) & nzchar(all_cite)]))
   n_refs     <- length(unique(c(valid_doi, valid_cite)))
