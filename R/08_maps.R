@@ -397,10 +397,10 @@ generate_all_maps <- function(scenario_table,
       id_col <- "HB_LABEL"
     } else if ("HYBAS_ID" %in% names(lyr)) {
       id_col <- "HYBAS_ID"
-      lyr$HB_LABEL <- as.character(lyr$HYBAS_ID)
+      lyr$HB_LABEL <- hb_id_string(lyr$HYBAS_ID)  # exact; as.character() can emit "3.1e+09"
     } else if ("PFAF_ID" %in% names(lyr)) {
       id_col <- "PFAF_ID"
-      lyr$HB_LABEL <- as.character(lyr$PFAF_ID)
+      lyr$HB_LABEL <- hb_id_string(lyr$PFAF_ID)
     } else {
       log_warn("  [BASINS] No recognized ID column in L%d. Columns: %s", 
                lvl, paste(names(lyr), collapse = ", "), module = module)
@@ -411,8 +411,18 @@ generate_all_maps <- function(scenario_table,
     log_info("  [BASINS] Matched %d basins for L%d", nrow(basins_subset), lvl, module = module)
     
     if (nrow(basins_subset) > 0) {
-      # Normalize to just HB_LABEL + geometry before combining
-      basins_subset <- basins_subset[, c("HB_LABEL", "geometry"), drop = FALSE]
+      # Normalize to HB_LABEL + drainage topology + geometry before combining.
+      # A layer without the topology columns is a cache written by older code;
+      # 02f rebuilds those, so reaching this branch means something bypassed
+      # that — say so rather than silently exporting NA.
+      for (fld in HB_TOPOLOGY_FIELDS) {
+        if (!fld %in% names(basins_subset)) {
+          log_warn("  [BASINS] L%d layer has no %s column - exported as NA. Rebuild the HydroBASINS cache.",
+                   lvl, fld, module = module)
+          basins_subset[[fld]] <- NA_real_
+        }
+      }
+      basins_subset <- basins_subset[, c("HB_LABEL", HB_TOPOLOGY_FIELDS, "geometry"), drop = FALSE]
       basin_geometries[[as.character(lvl)]] <- basins_subset
     }
   }
@@ -517,27 +527,47 @@ generate_all_maps <- function(scenario_table,
     all_basins$status[is.na(all_basins$status)] <- "Native"
   }
   
-  # ── Step 4b: Attach basin names (Lucian, 2026-08) ──
-  # Resolved by the SAME function the narratives use, so the string on a feature
-  # is by construction the string the narrative prints for that basin (Lucian,
-  # 2026-08). v1.2 wrote the coarse Basin_name here instead, which collapsed all
-  # 21 Austropotamobius bihariensis basins to "Danube" while the narrative named
-  # 11 of them — and left 357 of 676 species with a single distinct name across
-  # every basin they occupy. See resolve_basin_names() in 00_helpers.R.
-  bn <- resolve_basin_map_names(all_basins$HB_LABEL)
-  all_basins$basin_name <- bn$names
+  # ── Step 4b: Attach basin names and drainage topology (Lucian, 2026-09) ──
+  # Every basin feature carries two names, from the SAME resolver the
+  # narratives use:
+  #
+  #   basin_name       the root of the hierarchy, e.g. "Danube". Unchanged from
+  #                    v1.2, so existing consumers keep working.
+  #   basin_name_fine  the leaf, e.g. "Tisza - Crisul Repede" -- by construction
+  #                    the exact string the narrative prints for that basin.
+  #
+  # The root alone is useless as a spatial unit for a restricted-range endemic:
+  # all 21 Austropotamobius bihariensis polygons read "Danube", so an IUCN Green
+  # Status worksheet built on them lists 21 identical rows. The fine name is
+  # what tells an assessor which water each polygon actually is. It was already
+  # computed for the narrative, which named only three of the 11 in prose and
+  # attached none of them to an HB_LABEL, so nothing downstream could recover
+  # them.
+  bn_root <- resolve_basin_names(all_basins$HB_LABEL, granularity = "coarse")
+  bn_fine <- resolve_basin_map_names(all_basins$HB_LABEL)   # == narrative string
+  all_basins$basin_name      <- bn_root$names
+  all_basins$basin_name_fine <- bn_fine$names
 
-  log_info("  [BASINS] Basin names: %d named, %d unnamed",
-           bn$n_named, bn$n_unnamed, module = module)
-  if (bn$n_unmatched > 0L) {
+  # MAIN_BAS / NEXT_DOWN let a consumer resolve an anonymous basin through the
+  # real drainage hierarchy. Exact strings, like HB_LABEL: the source stores them
+  # as doubles, which would otherwise risk scientific notation in the export.
+  for (fld in HB_TOPOLOGY_FIELDS) {
+    all_basins[[fld]] <- hb_id_string(all_basins[[fld]])
+  }
+
+  log_info("  [BASINS] Names: %d distinct root, %d distinct fine, %d unnamed; topology on %d of %d features",
+           length(unique(bn_root$names)), length(unique(bn_fine$names)), bn_fine$n_unnamed,
+           sum(!is.na(all_basins$MAIN_BAS)), nrow(all_basins), module = module)
+  if (bn_fine$n_unmatched > 0L) {
     # Should not happen — 9,051/9,051 resolve on the WoC side. If it does, the
     # feature still gets a valid "unnamed" rather than a missing property.
     log_warn("  [BASINS] %d HB_LABEL(s) absent from the name lookup — wrote 'unnamed'",
-             bn$n_unmatched, module = module)
+             bn_fine$n_unmatched, module = module)
   }
 
-  # basin_name sits beside the id it names; sf keeps geometry last regardless.
-  all_basins <- all_basins[, c("HB_LABEL", "basin_name", "status"), drop = FALSE]
+  # Identity fields first, beside the id they describe; sf keeps geometry last.
+  all_basins <- all_basins[, c("HB_LABEL", "basin_name", "basin_name_fine",
+                               HB_TOPOLOGY_FIELDS, "status"), drop = FALSE]
 
   # ── Step 5: Apply styling ──
   styled_basins <- all_basins
@@ -665,8 +695,14 @@ generate_all_maps <- function(scenario_table,
   # element has to be inserted here. basin_name stays in ExtendedData too, which
   # keeps the KML's property set identical to the GeoJSON's.
   # Runs last so it cannot disturb the style substitutions above.
-  if ("basin_name" %in% names(basins_sf)) {
-    kml_txt <- .kml_insert_placemark_names(kml_txt, as.character(basins_sf$basin_name))
+  # The Placemark label is the FINE name: <name> is what Google Earth displays,
+  # and the root name would label every polygon of a restricted-range endemic
+  # identically ("Danube" x 21). Both names, and MAIN_BAS / NEXT_DOWN, are still
+  # in ExtendedData, so the KML carries the same properties as the GeoJSON.
+  label_col <- if ("basin_name_fine" %in% names(basins_sf)) "basin_name_fine" else
+               if ("basin_name" %in% names(basins_sf)) "basin_name" else NULL
+  if (!is.null(label_col)) {
+    kml_txt <- .kml_insert_placemark_names(kml_txt, as.character(basins_sf[[label_col]]))
   }
 
   writeLines(kml_txt, file_path)

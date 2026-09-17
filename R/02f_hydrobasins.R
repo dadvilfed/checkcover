@@ -131,8 +131,17 @@ enrich_with_hydrobasins_merged <- function(result,
         cached <- sanitize_spatial_layer(cached,
                                          layer_name = sprintf("HydroBASINS_L%s_cached", lvl))
         
-        if (nrow(cached) < (min_threshold * 0.5)) {
-          log_error("  CORRUPTED CACHE: L%d has only %d features (expected >%d)", 
+        # A cache is only valid if it carries every column downstream needs.
+        # Checking the feature count alone let a cache written before the
+        # topology fields existed pass validation and be reused, so every basin
+        # feature would have been exported with MAIN_BAS = NA and no error.
+        missing_cols <- setdiff(HB_TOPOLOGY_FIELDS, names(cached))
+        if (length(missing_cols) > 0) {
+          log_warn("  Cache for L%d predates the %s columns - rebuilding from source.",
+                   lvl, paste(missing_cols, collapse = "/"), module=module)
+          unlink(cpath)
+        } else if (nrow(cached) < (min_threshold * 0.5)) {
+          log_error("  CORRUPTED CACHE: L%d has only %d features (expected >%d)",
                     lvl, nrow(cached), min_threshold, module=module)
           log_error("  Deleting corrupted cache and regenerating...", module=module)
           unlink(cpath)
@@ -155,17 +164,27 @@ enrich_with_hydrobasins_merged <- function(result,
       lyr <- .std_geom(lyr)
       
       if ("HYBAS_ID" %in% names(lyr)) {
-        lyr$HB_LABEL <- as.character(lyr$HYBAS_ID)
+        lyr$HB_LABEL <- hb_id_string(lyr$HYBAS_ID)  # exact; as.character() can emit "3.1e+09"
         log_debug("  Using HYBAS_ID column", module=module)
       } else if ("PFAF_ID" %in% names(lyr)) {
-        lyr$HB_LABEL <- as.character(lyr$PFAF_ID)
+        lyr$HB_LABEL <- hb_id_string(lyr$PFAF_ID)
         log_debug("  Using PFAF_ID column", module=module)
       } else {
         log_error("  No HYBAS_ID or PFAF_ID column found!", module=module)
         stop("HydroBASINS file missing required ID column")
       }
       
-      lyr <- lyr[, c("HB_LABEL", "geometry"), drop=FALSE]
+      # Keep the drainage topology alongside the id. Everything else in the
+      # source table is still dropped to keep the global layers small. The
+      # topology fields stay numeric here, as in the source: they are formatted
+      # to exact strings only when written onto map features (hb_id_string()).
+      for (fld in HB_TOPOLOGY_FIELDS) {
+        if (!fld %in% names(lyr)) {
+          log_warn("  L%s source has no %s column - exported as NA.", lvl, fld, module=module)
+          lyr[[fld]] <- NA_real_
+        }
+      }
+      lyr <- lyr[, c("HB_LABEL", HB_TOPOLOGY_FIELDS, "geometry"), drop=FALSE]
       
       dup_count <- sum(duplicated(lyr$HB_LABEL))
       if (dup_count > 0) {

@@ -496,6 +496,34 @@ to *be* the mean pairwise distance — the defect above. It is replaced by:
 | `threshold_km` | the absolute cut height the clusters were computed under |
 | `mean_pairwise_distance_km` | a descriptive statistic of the points; **not** the threshold |
 
+**Basin map features.** Every feature in `*_basins.geojson` (and every KML
+Placemark, in ExtendedData) carries:
+
+| Property | Example | Meaning |
+|---|---|---|
+| `HB_LABEL` | `"2100513510"` | HydroBASINS id of the polygon |
+| `basin_name` | `"Danube"` | root of the naming hierarchy |
+| `basin_name_fine` | `"Tisza - Crișul Repede"` | the specific water; exactly the string the narrative prints |
+| `MAIN_BAS` | `"2100008490"` | outlet basin of the river system the polygon drains to |
+| `NEXT_DOWN` | `"2100514090"` | immediately downstream basin; `"0"` at an outlet |
+| `status` | `"Native"` | `Native` or `Introduced` |
+
+All ids are exact decimal strings. The source stores them as doubles, which R
+would otherwise write as `"3.1e+09"` for a round id. The KML Placemark label is
+`basin_name_fine`, because the root name labels every polygon of a
+restricted-range endemic identically.
+
+About one in five level-8 polygons has no name of its own. Walking `NEXT_DOWN`
+to the first named downstream basin names more of them than jumping to the
+outlet via `MAIN_BAS` (for *Procambarus clarkii*, 81 vs 55 of 113 anonymous
+polygons), but beyond the first hop it needs the downstream basins' own
+`NEXT_DOWN`, which is not on the species' features. Some systems stay
+anonymous regardless: they are unnamed in the source.
+
+The HydroBASINS cache is validated for these columns, not just for feature
+count, so a cache written before they existed is rebuilt rather than silently
+reused.
+
 Consumers reading `mean_threshold_km` (the World of Crayfish species pages do)
 need updating. An earlier rename in the same block — `fragmentation_clusters` →
 `n_clusters`, and the `fragmentation` block → `spatial_clustering` — is already

@@ -168,7 +168,14 @@ basin_display_name <- function(basin, subbasin, river, fallback = NA_character_)
 #'   every output a usable string (Lucian's rule: unnamed IS a name). Pass
 #'   NA to have unresolved codes returned verbatim instead.
 #' @return list(names, n_named, n_unnamed, n_unmatched).
-resolve_basin_names <- function(codes, hb_lookup = NULL, fallback = "unnamed") {
+#' @param granularity "fine" (default) is the narrative's label: the two finest
+#'   of Basin > Subbasin > river, e.g. "Tisza - Crisul Repede". "coarse" is the
+#'   root Basin_name alone, e.g. "Danube". Map features carry both (Lucian,
+#'   2026-09): the root groups basins into river systems, the fine name tells
+#'   an assessor which water each polygon actually is.
+resolve_basin_names <- function(codes, hb_lookup = NULL, fallback = "unnamed",
+                                granularity = c("fine", "coarse")) {
+  granularity <- match.arg(granularity)
   codes <- as.character(codes)
   ids   <- sub("^L[0-9]+:", "", codes)
   out   <- rep(NA_character_, length(codes))
@@ -192,9 +199,13 @@ resolve_basin_names <- function(codes, hb_lookup = NULL, fallback = "unnamed") {
     # distinct components, exactly as basin_display_name() has always done for
     # the narratives -- level-10 endemics must show the RIVER, not collapse to
     # the coarse basin (Lucian, 2026-07).
-    out[found] <- vapply(seq_along(jj), function(k)
-      basin_display_name(b[k], s[k], r[k], fallback = NA_character_),
-      character(1))
+    out[found] <- if (granularity == "coarse") {
+      b
+    } else {
+      vapply(seq_along(jj), function(k)
+        basin_display_name(b[k], s[k], r[k], fallback = NA_character_),
+        character(1))
+    }
   }
 
   # A row whose components are all blank resolves to nothing -> "unnamed",
@@ -208,6 +219,29 @@ resolve_basin_names <- function(codes, hb_lookup = NULL, fallback = "unnamed") {
     n_unnamed   = sum(out == "unnamed", na.rm = TRUE),
     n_unmatched = sum(!found)
   )
+}
+
+#' HydroBASINS topology fields carried onto every basin feature (Lucian,
+#' 2026-09). MAIN_BAS is the outlet basin of the river system a polygon drains
+#' to; NEXT_DOWN is the immediately downstream basin (0 at an outlet). Together
+#' they let a consumer resolve an anonymous basin through the real drainage
+#' hierarchy instead of inferring it from which records co-occur: about one in
+#' five level-8 polygons has no name of its own.
+HB_TOPOLOGY_FIELDS <- c("MAIN_BAS", "NEXT_DOWN")
+
+#' Format HydroBASINS ids as exact decimal strings.
+#'
+#' The source shapefiles store ids as doubles, and R's default conversion of a
+#' double to text can switch to scientific notation (3100000000 -> "3.1e+09"),
+#' which silently destroys a join key. sprintf("%.0f") is exact for every
+#' integer below 2^53, far above any HydroBASINS id. NEXT_DOWN = 0 (an outlet)
+#' is kept as "0", the HydroBASINS convention.
+hb_id_string <- function(x) {
+  x <- suppressWarnings(as.numeric(x))
+  out <- rep(NA_character_, length(x))
+  ok  <- !is.na(x)
+  out[ok] <- sprintf("%.0f", x[ok])
+  out
 }
 
 #' Map-export wrapper. Kept as its own name because 08_maps.R reports the
