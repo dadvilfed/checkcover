@@ -221,6 +221,34 @@ resolve_basin_names <- function(codes, hb_lookup = NULL, fallback = "unnamed",
   )
 }
 
+#' THE species-name normalisation, applied once at ingest.
+#'
+#' Every name in cheCkOVER passes through this before anything else sees it, and
+#' species folders are then make_package_id(normalize_species_name(x)). World of
+#' Crayfish reproduces the same two steps to match folders to taxa; the rule must
+#' live in exactly one place on each side, and agree (Lucian, 2026-09 — a first
+#' comparison mis-matched 23 Cambarellus taxa until the lowercasing below was
+#' reproduced). The steps, precisely, for porting:
+#'
+#'   1. collapse every run of whitespace to a single space; trim both ends
+#'   2. sentence case: the first character upper case, EVERY other character
+#'      lower case (ICU sentence case, stringr::str_to_sentence). This
+#'      lowercases a subgenus: "Cambarellus (Pandicambarus) rotatus" becomes
+#'      "Cambarellus (pandicambarus) rotatus"
+#'
+#' and for the folder name, make_package_id():
+#'
+#'   3. delete "(" and ")"
+#'   4. replace every run of whitespace with "_"; collapse runs of "_"; trim "_"
+#'
+#' e.g. "Cambarellus  (Pandicambarus) rotatus " -> species
+#' "Cambarellus (pandicambarus) rotatus" -> folder
+#' "Cambarellus_pandicambarus_rotatus".
+normalize_species_name <- function(x) {
+  x <- trimws(gsub("\\s+", " ", as.character(x)))
+  stringr::str_to_sentence(x)
+}
+
 #' HydroBASINS topology fields carried onto every basin feature (Lucian,
 #' 2026-09). MAIN_BAS is the outlet basin of the river system a polygon drains
 #' to; NEXT_DOWN is the immediately downstream basin (0 at an outlet). Together
@@ -319,6 +347,12 @@ nz_or_na <- function(x) {
 #     -> "Cambarellus_Cambarellus_chapalanus"
 #   make_package_id("Procambarus hagenianus vesticeps")
 #     -> "Procambarus_hagenianus_vesticeps"
+#
+# NB make_package_id() itself preserves case, but it never sees the raw name:
+# ingest passes every name through normalize_species_name() first, and that
+# lowercases the subgenus. So the real folder is
+# "Cambarellus_cambarellus_chapalanus", not the "Cambarellus_Cambarellus_..."
+# above. 23 taxa carry a subgenus and are affected.
 make_package_id <- function(sp) {
   out <- trimws(as.character(sp))
   out <- gsub("[()]", "", out, perl = TRUE)

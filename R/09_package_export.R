@@ -351,6 +351,11 @@ export_species_packages <- function(ctx,
           license = "CC-BY-4.0",
           framework = "cheCkOVER",
           framework_version = framework_version,
+          # The SOFTWARE that computed this package, as distinct from the
+          # revision it belongs to. In every 1.2 package snapshot.version and
+          # framework_version carried the same number, so a data refresh and a
+          # change of method were indistinguishable (Lucian, 2026-09).
+          code_version = ctx$code_version %||% "unknown",
           generated_date = as.character(Sys.Date())
         ),
         
@@ -545,17 +550,20 @@ export_species_packages <- function(ctx,
         n_records            = o$n_records,
         change_summary       = o$change_summary
       )
-      # fingerprint_at_source: same as fingerprint, EXCEPT for unchanged species
-      # (where the source's fingerprint may differ from ours conceptually — but
-      # since unchanged means identical fps, they coincide. Stored explicitly
-      # for forward compatibility / audit.)
-      entry$fingerprint_at_source <- o$fingerprint
+      # fingerprint_at_source: the fingerprint of the data the inherited or
+      # current artifacts were computed from. Equal to `fingerprint` for new,
+      # reprocessed and unchanged taxa. For a "deferred" taxon it is the SOURCE
+      # revision's fingerprint while `fingerprint` is the current data's — and
+      # the next run compares against fingerprint_at_source, so the pending
+      # change stays visible until the taxon is approved and reprocessed.
+      entry$fingerprint_at_source <- o$fingerprint_at_source %||% o$fingerprint
       species_entries[[o$species_clean]] <- entry
     }
     
     version_manifest <- list(
       framework         = "cheCkOVER",
       framework_version = framework_version,
+      code_version      = ctx$code_version %||% "unknown",
       run_id            = ctx$run_id,
       generated_date    = format(ctx$generated_date, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
       prior_version     = prior_v,
@@ -564,6 +572,8 @@ export_species_packages <- function(ctx,
         unchanged               = outcome_count("unchanged"),
         reprocessed             = outcome_count("reprocessed"),
         new                     = outcome_count("new"),
+        deferred                = outcome_count("deferred"),
+        deferred_new            = outcome_count("deferred_new"),
         active_runtime_species  = length(ctx$active_species)
       ),
       species = species_entries
@@ -585,4 +595,67 @@ export_species_packages <- function(ctx,
       summary = summary_data
     ))
   })
+}
+
+#' Write <rev>/checkover/records_used.tsv — the coordinate-free record list.
+#'
+#' Replaces the cleaned input table that used to sit in <rev>/checkover/ with
+#' exact coordinates (Lucian, 2026-09, UVT server setup, section 05). One row per
+#' record that entered a package of THIS revision, after ingest cleaning:
+#'
+#'   record_id  the source occurrence id (WoCID / occurrenceID)
+#'   species    the normalised name the package folder is derived from
+#'   state      active | suppressed | extinct
+#'
+#' That is all a consumer needs to tell what changed between revisions: the set
+#' of ids per species and their state, compared by anti-join. No coordinates, no
+#' confidentiality columns, no free text — and the writer refuses to emit any
+#' other column, so a later edit cannot widen it by accident.
+#'
+#' @param ctx RunContext (current_scaffolding_dir must exist).
+#' @param branches List of branch result objects, each with $clean_data.
+#' @return Path written (invisibly).
+write_records_used <- function(ctx, branches, module = "MODULE9_PACKAGES") {
+  rows <- lapply(branches, function(b) {
+    cd <- b$clean_data
+    if (is.null(cd) || nrow(cd) == 0L) return(NULL)
+    state <- if ("temporal_status" %in% names(cd)) as.character(cd$temporal_status) else {
+      log_warn("records_used: no temporal_status column - every record written as 'active'.",
+               module = module)
+      rep("active", nrow(cd))
+    }
+    data.frame(record_id = as.character(cd$record_id),
+               species   = as.character(cd$species),
+               state     = state,
+               stringsAsFactors = FALSE)
+  })
+  out <- do.call(rbind, rows[!vapply(rows, is.null, logical(1))])
+  if (is.null(out)) out <- data.frame(record_id = character(), species = character(),
+                                      state = character(), stringsAsFactors = FALSE)
+
+  # The contract is exactly these three columns. Anything else is a leak.
+  stopifnot(identical(names(out), c("record_id", "species", "state")))
+
+  bad_state <- !out$state %in% c("active", "suppressed", "extinct")
+  if (any(bad_state)) {
+    log_warn("records_used: %d record(s) with an unexpected state value.",
+             sum(bad_state), module = module)
+  }
+  n_no_id <- sum(is.na(out$record_id) | !nzchar(out$record_id))
+  if (n_no_id > 0L) {
+    # A record without an id cannot be anti-joined across revisions. WoC data
+    # always carries WoCID; a dataset without occurrenceID will hit this.
+    log_warn("records_used: %d record(s) have no record_id.", n_no_id, module = module)
+  }
+
+  out <- out[order(out$species, out$record_id), , drop = FALSE]
+  if (!dir.exists(ctx$current_scaffolding_dir)) {
+    dir.create(ctx$current_scaffolding_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+  path <- file.path(ctx$current_scaffolding_dir, "records_used.tsv")
+  utils::write.table(out, path, sep = "\t", row.names = FALSE, quote = FALSE,
+                     na = "", fileEncoding = "UTF-8")
+  log_info("Wrote records_used.tsv: %d records across %d species.",
+           nrow(out), length(unique(out$species)), module = module)
+  invisible(path)
 }

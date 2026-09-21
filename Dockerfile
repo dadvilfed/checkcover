@@ -5,18 +5,26 @@
 # pins the R version used for the published run; bump it deliberately, never
 # implicitly, because spatial results depend on the GDAL/PROJ generation.
 #
-#   docker build -t checkover:1.0 .
+#   git checkout runtime-1.3
+#   docker build --build-arg CODE_VERSION=runtime-1.3 -t checkover:runtime-1.3 .
+#
+# CODE_VERSION is written into every package and manifest as
+# provenance.code_version. Build only from a tag: the image carries no .git, so
+# this build argument is the only record of which code computed a revision.
 #
 #   docker run --rm \
 #     -v "$PWD/data:/work/data:ro" \
 #     -v "$PWD/spatial_data:/work/spatial_data:ro" \
 #     -v "$PWD/checkover_output:/work/checkover_output" \
-#     checkover:1.0
+#     checkover:runtime-1.3
 #
 # Occurrence data and reference layers are deliberately NOT baked into the
 # image — they are mounted at run time. See README "Data availability".
 
 FROM rocker/geospatial:4.5.2
+
+ARG CODE_VERSION=unknown
+ENV CHECKOVER_CODE_VERSION=${CODE_VERSION}
 
 LABEL org.opencontainers.image.title="cheCkOVER" \
       org.opencontainers.image.description="Reproducible framework for versioned biodiversity occurrence packages" \

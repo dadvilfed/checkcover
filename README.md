@@ -25,6 +25,10 @@ It was built for the [World of Crayfish](https://world.crayfish.ro) database
   - [Configuration reference](#configuration-reference)
   - [Parallelisation](#parallelisation)
 - [Versioning and change detection](#versioning-and-change-detection)
+  - [Outcomes](#outcomes)
+  - [Restricting a run to approved taxa](#restricting-a-run-to-approved-taxa)
+  - [Which code built a revision](#which-code-built-a-revision)
+  - [Forcing a reprocess](#forcing-a-reprocess)
 - [Troubleshooting](#troubleshooting)
 - [Verification](#verification)
 - [Module map](#module-map)
@@ -50,8 +54,26 @@ Astacus_astacus/
 ```
 
 Run-level scaffolding lives in `<root>/<version>/checkover/` (manifest,
-fingerprints, index) — deliberately outside the species namespace so a
-consuming platform can treat every `Genus_species/` folder as a drop-in unit.
+fingerprints, index, `records_used.tsv`, `_audit_report.json`) — deliberately
+outside the species namespace so a consuming platform can treat every
+`Genus_species/` folder as a drop-in unit.
+
+**A revision folder carries no coordinates.** `<root>/<version>/` is what a
+platform installs, so nothing in it may hold a record location: not a package,
+not the scaffolding, not a log. The cleaned input table (`clean_occurrences.tsv`)
+is a run input. It stays in the run's work directory, `<root>/runs/<run_id>/`,
+and is never copied into the revision. Revisions built before 2026-09 did copy
+it into `<version>/checkover/`; do not republish them.
+
+What a platform gets instead is `checkover/records_used.tsv`: one row per record
+the run used, with exactly three columns — `record_id`, `species`, `state`
+(`active`, `suppressed` or `extinct`). It says which records stand behind each
+package without saying where they are.
+
+> **Publish the revision folders, not `<root>`.** `runs/`, `cache/`, `logs/`,
+> `temporal/` and `_registry.json` under `<root>` are working state, and
+> `runs/` and `temporal/` hold coordinates. Mirror or publish
+> `<root>/<version>/` folders only.
 
 The run directory also carries an audit of what was discarded during ingest:
 
@@ -272,6 +294,7 @@ manuscript supplements.
 | `temporal$enabled` | `TRUE` | Per-species versioned temporal tracking (Modules 11–13). |
 | `temporal$major_bump` | `FALSE` | Force v1.x → v2.0 instead of v1.x+1. |
 | `force_reprocess` | `FALSE` | `TRUE`, or a vector of species, to rebuild despite unchanged data. See below. |
+| `species_scope` | `NULL` | A vector of species: only these may be reprocessed; other changed taxa are `deferred`. See below. |
 
 **Resources**
 
@@ -327,6 +350,67 @@ its artifacts already live. Only `new` and `reprocessed` species are rebuilt.
 This makes an incremental version cheap: the v1.0 → v1.1 run in the reference
 dataset reprocessed 16 of 676 species. `<version>/checkover/manifest.json` is
 the consumer-facing record of what lives where.
+
+**The change rule is exact.** A taxon's fingerprint covers 15 columns of every
+one of its records: `record_id`, `longitude`, `latitude`, `year`, `is_extinct`,
+`is_type_locality`, `population_status`, `status.x`, `accuracy`, `doi`, `url`,
+`citation`, `contributor`, `confidentiality_level`, `is_sensitive`. Any
+difference in any of them — one record added, removed or edited — marks the
+taxon changed. There is no minimum size of change. (The ±5 % that appears in
+narratives is the threshold of the AOO *trend label*, and has nothing to do
+with change detection.)
+
+### Outcomes
+
+Every taxon in the input gets exactly one outcome in the manifest:
+
+| Outcome | Data since its source revision | Processed | Package | `source_version` |
+|---|---|---|---|---|
+| `new` | never seen before | yes | built in this revision | this revision |
+| `reprocessed` | changed, or forced | yes | built in this revision | this revision |
+| `unchanged` | identical | no | inherited | the revision holding its artifacts |
+| `deferred` | changed, but outside `species_scope` | no | inherited, now out of date | the revision holding its artifacts |
+| `deferred_new` | never seen, outside `species_scope` | no | **none** | `null` |
+
+`deferred` and `deferred_new` occur only when `species_scope` is set.
+
+### Restricting a run to approved taxa
+
+`species_scope` limits which taxa a run may reprocess. The input is still the
+full cohort — fingerprints and inheritance need the whole table — but only
+listed taxa, plus any in `force_reprocess`, are rebuilt:
+
+```r
+CONFIG$species_scope <- NULL                          # every changed taxon (a full run)
+CONFIG$species_scope <- c("Astacus astacus", "Pontastacus leptodactylus")
+```
+
+This is how a platform such as World of Crayfish reprocesses exactly what an
+administrator approved. The `deferred` and `deferred_new` entries in the
+manifest are the queue for the next request.
+
+A deferred change is never lost. For a `deferred` taxon the manifest records
+two fingerprints: `fingerprint` (the current data) and `fingerprint_at_source`
+(the data its inherited package was built from). The next run compares against
+the source fingerprint, so it still sees the change and reprocesses the taxon
+once it is in scope. A `deferred_new` entry is skipped entirely by later runs,
+so the taxon is `new` the first time it is in scope.
+
+### Which code built a revision
+
+`framework_version` names the revision; it says nothing about the code. That is
+recorded separately as `provenance.code_version` in every `package_metadata.json`
+and as `code_version` at the top of `manifest.json`, resolved in this order:
+
+1. `CONFIG$code_tag`, if set (a service passes the tag it deployed)
+2. the `CHECKOVER_CODE_VERSION` environment variable (set by the Docker build
+   argument `CODE_VERSION`)
+3. `git describe --tags --always --dirty`, prefixed `git:`
+4. `"unknown"`
+
+Build and run production revisions from a tag. A value ending in `-dirty` means
+the working tree had uncommitted changes, and the revision cannot be traced to
+any published code.
 
 ### Forcing a reprocess
 
@@ -413,14 +497,35 @@ Rscript tests/run_all.R                              # unit + regression suite
 Rscript tests/audit_packages.R checkover_output/1.0  # per-package integrity
 ```
 
-**`tests/run_all.R`** — 14 files covering the classifier, extinction handling,
-the geographic fallback, vocabulary, Darwin Core mapping, fingerprinting, basin
-resolution and narrative consistency. Each runs in its own process.
+**`tests/run_all.R`** — every `tests/test_*.R` (29 at present), covering the
+classifier, extinction handling, the geographic fallback, vocabulary, Darwin
+Core mapping, fingerprinting, species scope, basin resolution, narrative
+consistency and the coordinate-free rule. Each runs in its own process.
 
 **`tests/audit_packages.R`** — for every species package, asserts the expected
 artifacts exist and are non-empty, and that every headline number in the
-narrative equals the corresponding field in `package_metadata.json`. Exits
-non-zero on any mismatch. Run it before publishing anything.
+narrative equals the corresponding field in `package_metadata.json`. It then
+scans the whole revision folder for coordinates: R binaries, table columns or
+JSON keys named like coordinates (`latitude`, `decimalLongitude`, `x`, …),
+decimal latitude/longitude pairs in text, and `Point` geometries in `maps/`
+(range polygons are exempt). The report is written to
+`<version>/checkover/_audit_report.json`. Exits non-zero on any mismatch or any
+coordinate finding. Run it before publishing anything.
+
+> The polygon exemption is a policy choice, not a proof of safety: an EOO
+> convex hull's corners are exact record localities, including confidential
+> ones.
+
+**`tools/collect_server_facts.sh`** — for a server that runs cheCkOVER as a
+service. Read-only; it writes `server_facts_<host>_<date>.txt` with the OS,
+container runtime, R and GDAL/GEOS/PROJ stack, package versions, the deployed
+commit, output sizes, and a check of a mirrored output root (file checksums
+against `file_manifest.csv`, any leftover `clean_occurrences.tsv`, and the
+coordinate scan above). It prints counts and sizes, never coordinates.
+
+```bash
+bash tools/collect_server_facts.sh /path/to/checkcover /path/to/checkover_output
+```
 
 A third check runs inside the pipeline itself: Module 2C writes
 `geographic_integrity.{json,tsv}` to the run directory each run, recording how
@@ -475,6 +580,14 @@ These are decisions, not accidents — changing one changes published numbers.
 | Clustering basin level | the level already assigned per category — L10 endemic, L08 regional, L06 cosmopolitan |
 | Clustering threshold | **provisional at 10 km**, for the between-basin rule only — a configuration choice, not a workflow property; recorded in every output |
 | De-duplication | species + coordinates + year. **All** source citations of the collapsed group are retained in `citation_all` |
+| Species names | whitespace collapsed and trimmed, then **sentence case** — which lowercases a subgenus: `Cambarellus (pandicambarus) rotatus` |
+| Package folder | the normalised name with parentheses removed and spaces → `_`: `Cambarellus_pandicambarus_rotatus` |
+
+**Name → folder is one rule, in one place.** `normalize_species_name()` and
+`make_package_id()` in `R/00_helpers.R` are the only code that turns a name
+into a folder; ingest, change detection, export and the temporal store all call
+them. A platform matching folders to its own taxa must reproduce both steps
+exactly — the subgenus lowercasing included, which affects 23 taxa.
 
 > **Clustering results before v1.3 are not usable.** Up to and including v1.2 the
 > cut height was the *mean pairwise distance of the points themselves*. With

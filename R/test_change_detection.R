@@ -59,12 +59,20 @@ mk_records <- function(species, n, start_id = 1, is_extinct_idx = integer(0)) {
   )
 }
 
+# The cleaned table is a run input, not a revision artifact: it carries
+# coordinates, so it lives in the run's work directory, never under the output
+# root (UVT server setup, section 05). One work dir per output root + version,
+# outside that root, so a re-created context finds the same table.
+work_dir_for <- function(ctx) {
+  file.path(tempdir(), "test_cd_work",
+            basename(ctx$root_output_dir), ctx$framework_version)
+}
+with_work_dir <- function(ctx) { ctx$work_dir <- work_dir_for(ctx); ctx }
+
 write_clean_tsv <- function(ctx, df) {
-  if (!dir.exists(ctx$current_scaffolding_dir)) {
-    dir.create(ctx$current_scaffolding_dir, recursive = TRUE, showWarnings = FALSE)
-  }
-  write.table(df,
-              file.path(ctx$current_scaffolding_dir, "clean_occurrences.tsv"),
+  wd <- work_dir_for(ctx)
+  dir.create(wd, recursive = TRUE, showWarnings = FALSE)
+  write.table(df, file.path(wd, "clean_occurrences.tsv"),
               sep = "\t", quote = FALSE, row.names = FALSE, na = "NA")
 }
 
@@ -105,7 +113,7 @@ df_v1_0 <- rbind(
 write_clean_tsv(ctx, df_v1_0)
 
 ctx$all_species <- c("Astacus astacus", "Cambarellus (Cambarellus) chapalanus")
-ctx <- detect_species_changes(ctx)  # reads from disk
+ctx <- detect_species_changes(with_work_dir(ctx))  # reads from disk
 
 check("no prior versions detected", length(ctx$prior_versions) == 0L)
 check("active_species contains all (both new)",
@@ -178,7 +186,7 @@ check("v1.1 sees v1.0 as prior", identical(ctx2$prior_versions, "1.0"))
 
 write_clean_tsv(ctx2, df_v1_0)  # IDENTICAL data
 ctx2$all_species <- c("Astacus astacus", "Cambarellus (Cambarellus) chapalanus")
-ctx2 <- detect_species_changes(ctx2)
+ctx2 <- detect_species_changes(with_work_dir(ctx2))
 
 check("Astacus outcome == 'unchanged'",
       ctx2$species_outcomes[["Astacus astacus"]]$outcome == "unchanged")
@@ -202,7 +210,7 @@ write_clean_tsv(ctx2, df_v1_1)
 
 ctx2 <- RunContext_init(cfg2, run_id = "v1_1_test_b")  # fresh ctx for clean state
 ctx2$all_species <- c("Astacus astacus", "Cambarellus (Cambarellus) chapalanus")
-ctx2 <- detect_species_changes(ctx2)
+ctx2 <- detect_species_changes(with_work_dir(ctx2))
 
 check("Astacus outcome == 'reprocessed'",
       ctx2$species_outcomes[["Astacus astacus"]]$outcome == "reprocessed")
@@ -282,7 +290,7 @@ check("prior_versions in correct numeric-desc order",
 df_v1_4 <- mk_records("Astacus astacus", 6, is_extinct_idx = 1)  # different from v1.0 (5 records, no extinctions)
 write_clean_tsv(ctx4, df_v1_4)
 ctx4$all_species <- "Astacus astacus"
-ctx4 <- detect_species_changes(ctx4)
+ctx4 <- detect_species_changes(with_work_dir(ctx4))
 
 out <- ctx4$species_outcomes[["Astacus astacus"]]
 check("walk skips v1.3 (no entry) and v1.2/v1.1 (unchanged pointing back)",
@@ -303,7 +311,7 @@ cat("\n[5] Species absent from all priors -> 'new'\n")
 df_v1_4_with_new <- rbind(df_v1_4, mk_records("Brand new species", 4))
 write_clean_tsv(ctx4, df_v1_4_with_new)
 ctx4$all_species <- c("Astacus astacus", "Brand new species")
-ctx4 <- detect_species_changes(ctx4)
+ctx4 <- detect_species_changes(with_work_dir(ctx4))
 
 bn_out <- ctx4$species_outcomes[["Brand new species"]]
 check("brand-new species outcome == 'new'",
@@ -325,10 +333,15 @@ cfg6 <- list(framework_version = "1.0", root_output_dir = td6)
 ctx6 <- RunContext_init(cfg6, run_id = "missing_test")
 ctx6$all_species <- "Astacus astacus"
 
-err <- tryCatch(detect_species_changes(ctx6),
+err <- tryCatch(detect_species_changes(with_work_dir(ctx6)),
                 error = function(e) conditionMessage(e))
 check("missing clean_occurrences.tsv produces informative error",
       is.character(err) && grepl("clean_occurrences.tsv not found", err))
+
+err_wd <- tryCatch(detect_species_changes(ctx6),
+                   error = function(e) conditionMessage(e))
+check("no work_dir produces informative error",
+      is.character(err_wd) && grepl("work_dir is not set", err_wd))
 
 # pre-ingest call should fail validate_RunContext
 ctx_preingest <- RunContext_init(cfg6, run_id = "pre_ingest_test")

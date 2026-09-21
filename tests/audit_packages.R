@@ -248,6 +248,113 @@ audit_narrative_metadata_consistency <- function(version_dir) {
 
 
 # ===========================================================================
+# 3. Coordinate-free revision (UVT server setup, section 05; Lucian, 2026-09)
+# ===========================================================================
+# Every delivery up to 1.2 carried <rev>/checkover/clean_occurrences.tsv: the
+# cleaned input with the exact coordinates of ~120k records, ~66k of them
+# confidentiality level 1 or 2. It was uploaded into a folder the World of
+# Crayfish web server serves. The platform's rule since: nothing that carries
+# coordinates may be installed — not in the sidecar, not in a package, not in a
+# log. The platform validates this report before installing, so a coordinate
+# anywhere below fails the revision and it is never installed.
+#
+# Checked in every file under <rev>/:
+#   * tables (tsv/csv/txt): a coordinate-named column in the header
+#   * JSON: a coordinate-named key anywhere in the tree
+#   * any text file: a decimal latitude/longitude pair (>= 4 decimals each)
+#   * R binaries (.rds/.rda/.RData): refused outright, their content is opaque
+#   * maps/ layers: polygons are exempt (Lucian's rule); POINT geometries are
+#     not, because a point in a map layer is an occurrence
+#
+# Known gap, NOT caught here: an EOO layer is a convex hull, and its corners are
+# the exact localities of the outermost records. Detecting that needs the
+# confidentiality of the input records, which by design is not in <rev>/.
+COORD_NAMES <- c("lat", "latitude", "lon", "lng", "long", "longitude",
+                 "decimallatitude", "decimallongitude", "verbatimlatitude",
+                 "verbatimlongitude", "x", "y", "coordinates")
+
+# Each number must stand alone: not glued to a letter, digit, dot or slash on
+# either side. Without that, reference lists false-positive on DOIs —
+# "10.1002/ECE3.4817; 10.1016/..." reads as the pair (3.4817, 10.1016). DOIs are
+# also stripped before matching (.strip_dois), belt and braces.
+.coord_pair_rx <- paste0("(?<![A-Za-z0-9./_])(-?[0-9]{1,3}\\.[0-9]{4,})(?![0-9])",
+                         "\\s*[,;\\t ]\\s*",
+                         "(-?[0-9]{1,3}\\.[0-9]{4,})(?![0-9./A-Za-z])")
+.strip_dois <- function(x) gsub("\\b10\\.[0-9]{4,9}/[^\\s;,]+", " ", x, perl = TRUE)
+
+# Line by line, deliberately. Collecting every match of the pattern across one
+# multi-megabyte string with gregexpr() is super-linear: 0.01 s on 100 KB but
+# 122 s on 2 MB, so the whole audit of a revision took over ten minutes. A
+# vectorised grepl() picks the candidate lines first, and only those are parsed.
+.has_coord_pair <- function(txt) {
+  lines <- .strip_dois(strsplit(txt, "\n", fixed = TRUE)[[1]])
+  cand  <- which(grepl(.coord_pair_rx, lines, perl = TRUE))
+  for (i in utils::head(cand, 5000L)) {
+    for (p in regmatches(lines[i], gregexpr(.coord_pair_rx, lines[i], perl = TRUE))[[1]]) {
+      v <- suppressWarnings(as.numeric(strsplit(gsub("\\s+", ",", gsub("[;\t]", ",", p)), ",+")[[1]]))
+      v <- v[!is.na(v)]
+      if (length(v) == 2 &&
+          ((abs(v[1]) <= 90 && abs(v[2]) <= 180) || (abs(v[1]) <= 180 && abs(v[2]) <= 90)))
+        return(TRUE)
+    }
+  }
+  FALSE
+}
+
+.json_keys <- function(x) {
+  if (is.list(x)) c(names(x), unlist(lapply(x, .json_keys), use.names = FALSE)) else character(0)
+}
+
+audit_coordinate_free <- function(version_dir, max_scan_bytes = 20e6) {
+  files <- list.files(version_dir, recursive = TRUE, all.files = TRUE, no.. = TRUE)
+  files <- files[!file.info(file.path(version_dir, files))$isdir]
+  # The report this function feeds is itself written into checkover/.
+  files <- files[basename(files) != "_audit_report.json"]
+
+  flags <- list()
+  flag  <- function(f, why) flags[[f]] <<- c(flags[[f]], why)
+
+  for (f in files) {
+    p   <- file.path(version_dir, f)
+    ext <- tolower(tools::file_ext(f))
+    in_maps <- grepl("(^|/)maps/", f)
+
+    if (ext %in% c("rds", "rda", "rdata")) {
+      flag(f, "R binary: opaque, may carry coordinates; never ship")
+      next
+    }
+    if (!ext %in% c("tsv", "csv", "txt", "json", "geojson", "kml", "md", "bib", "cff", "xml")) next
+
+    size <- file.info(p)$size
+    txt  <- tryCatch(readChar(p, min(size, max_scan_bytes), useBytes = TRUE),
+                     error = function(e) "")
+
+    if (in_maps && ext %in% c("geojson", "json", "kml")) {
+      if (grepl('"type"\\s*:\\s*"(Multi)?Point"', txt, perl = TRUE) || grepl("<Point>", txt, fixed = TRUE))
+        flag(f, "map layer contains POINT geometry (occurrence locations)")
+      next   # polygon layers are exempt
+    }
+
+    if (ext %in% c("tsv", "csv", "txt")) {
+      hdr <- strsplit(sub("[\r\n].*$", "", txt), if (ext == "csv") "," else "\t")[[1]]
+      hdr <- tolower(gsub('^"|"$', "", trimws(hdr)))
+      hit <- intersect(hdr, COORD_NAMES)
+      if (length(hit)) flag(f, sprintf("coordinate column(s): %s", paste(hit, collapse = ", ")))
+    }
+    if (ext %in% c("json", "geojson")) {
+      keys <- tryCatch(tolower(.json_keys(jsonlite::fromJSON(txt, simplifyVector = FALSE))),
+                       error = function(e) character(0))
+      hit <- intersect(unique(keys), COORD_NAMES)
+      if (length(hit)) flag(f, sprintf("coordinate key(s): %s", paste(hit, collapse = ", ")))
+    }
+    if (.has_coord_pair(txt)) flag(f, "text contains a decimal latitude/longitude pair")
+    if (size > max_scan_bytes) flag(f, sprintf("%.0f MB: larger than anything a package should hold", size / 1e6))
+  }
+
+  list(n_checked = length(files), n_flagged = length(flags), flags = flags)
+}
+
+# ===========================================================================
 # CLI entry point
 # ===========================================================================
 # Run the CLI only when this file is the top-level Rscript target — not when it
@@ -282,18 +389,30 @@ if (sys.nframe() == 0L && !interactive()) {
     for (p in cons$mismatches[[sp]]) cat(sprintf("        * %s\n", p))
   }
 
-  # Persist a machine-readable report next to the version dir.
+  coords <- audit_coordinate_free(version_dir)
+  cat(sprintf("\n[3] Coordinate-free revision: %d/%d files flagged\n",
+              coords$n_flagged, coords$n_checked))
+  for (f in names(coords$flags)) {
+    cat(sprintf("    - %s:\n", f))
+    for (p in coords$flags[[f]]) cat(sprintf("        * %s\n", p))
+  }
+
+  # The report lives in <rev>/checkover/, beside the manifest: it is part of
+  # the sidecar the platform validates before installing a revision.
   report <- list(
-    version_dir = version_dir,
-    generated   = as.character(Sys.time()),
-    integrity   = integ,
-    consistency = cons
+    version_dir     = version_dir,
+    generated       = as.character(Sys.time()),
+    integrity       = integ,
+    consistency     = cons,
+    coordinate_free = coords
   )
-  out <- file.path(version_dir, "_audit_report.json")
+  out_dir <- file.path(version_dir, "checkover")
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  out <- file.path(out_dir, "_audit_report.json")
   jsonlite::write_json(report, out, pretty = TRUE, auto_unbox = TRUE, na = "null")
   cat(sprintf("\nReport written to %s\n", out))
 
-  failed <- integ$n_flagged > 0 || cons$n_mismatched > 0
+  failed <- integ$n_flagged > 0 || cons$n_mismatched > 0 || coords$n_flagged > 0
   cat(sprintf("\nRESULT: %s\n\n", if (failed) "FAIL" else "PASS"))
   quit(status = if (failed) 1 else 0)
 }

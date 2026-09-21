@@ -667,11 +667,8 @@ ingest_clean <- function(file_path, output_dir = "checkover_output",
                n_multi_src, module = module)
     }
 
-    clean_data <- clean_data %>%
-      dplyr::mutate(
-        species = stringr::str_replace_all(species, "\\s+", " "),
-        species = stringr::str_to_sentence(species)
-      )
+    # The one species-name rule; see normalize_species_name() in 00_helpers.R.
+    clean_data$species <- normalize_species_name(clean_data$species)
 
     yr_bad  <- !dplyr::between(clean_data$year, 1500, year_now)
     yr_bad[is.na(yr_bad)] <- TRUE

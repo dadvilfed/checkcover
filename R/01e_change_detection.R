@@ -56,6 +56,11 @@
 
     entry <- m$species[[species_clean]]
     if (is.null(entry)) next  # species not in this version's cohort
+    # A "deferred_new" entry records a taxon that was seen but never packaged:
+    # no artifacts exist and it has no source_version. Keep looking further
+    # back; if nothing older is found the taxon is correctly treated as new.
+    if (identical(entry$outcome, "deferred_new") ||
+        is.null(entry$source_version) || is.na(entry$source_version)) next
 
     # Found. Resolve source_version (where artifacts live) and the
     # fingerprint stored at source.
@@ -95,7 +100,8 @@ if (!exists("%||%", mode = "function")) {
 .write_species_fingerprint_file <- function(ctx, species_clean,
                                             fingerprint, n_records,
                                             outcome, source_version,
-                                            prior_source_version = NULL) {
+                                            prior_source_version = NULL,
+                                            fingerprint_at_source = fingerprint) {
   fp_dir <- file.path(ctx$current_scaffolding_dir, "fingerprints")
   if (!dir.exists(fp_dir)) dir.create(fp_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -104,6 +110,7 @@ if (!exists("%||%", mode = "function")) {
     framework_version    = ctx$framework_version,
     generated_date       = format(ctx$generated_date, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
     fingerprint          = fingerprint,
+    fingerprint_at_source = fingerprint_at_source,
     n_records            = as.integer(n_records),
     outcome              = outcome,
     source_version       = source_version,
@@ -212,12 +219,18 @@ detect_species_changes <- function(ctx, clean_data = NULL) {
 
   # ── Resolve clean_data source: arg, or read from canonical path ──
   if (is.null(clean_data)) {
-    src <- file.path(ctx$current_scaffolding_dir, "clean_occurrences.tsv")
+    # Read from the run's work directory, never from <rev>/checkover/: the table
+    # carries exact coordinates and <rev>/ is what gets delivered.
+    if (is.null(ctx$work_dir)) {
+      stop("Phase 1.5: ctx$work_dir is not set, so the cleaned input table ",
+           "cannot be located. The orchestrator sets it after ingest.")
+    }
+    src <- file.path(ctx$work_dir, "clean_occurrences.tsv")
     if (!file.exists(src)) {
       stop(sprintf(
         "Phase 1.5: clean_occurrences.tsv not found at %s. ",
         src),
-        "Phase 1 (ingest) must run first and write to <v>/checkover/.")
+        "Phase 1 (ingest) must run first and write it to the run directory.")
     }
     if (exists("log_info", mode = "function")) {
       log_info("Reading clean_occurrences from %s", src, module = module)
@@ -273,12 +286,34 @@ detect_species_changes <- function(ctx, clean_data = NULL) {
       module = module)
   }
 
+  # ── Species scope (option (b), UVT server setup section 04; 2026-09) ──
+  # A run receives the FULL cohort as input, because fingerprints and
+  # inheritance need the whole table, plus the list of taxa an admin approved.
+  # Without a scope, every taxon whose data changed is reprocessed, approved or
+  # not, so the cost of a run is unpredictable and what ran is not what was
+  # approved. With CONFIG$species_scope set, only the listed taxa may be
+  # reprocessed; any other taxon whose data changed is carried over unchanged
+  # and recorded as "deferred", which is exactly the next request queue.
+  # Forced taxa are always in scope. NULL / FALSE / TRUE = every taxon.
+  scope_spec <- .resolve_force_spec(ctx$species_scope %||% FALSE,
+                                    species_universe, module = module)
+  in_scope <- function(sp) {
+    scope_spec$mode != "subset" || sp %in% scope_spec$species ||
+      force_spec$mode == "all" || sp %in% force_spec$species
+  }
+  if (scope_spec$mode == "subset" && exists("log_info", mode = "function")) {
+    log_info("species_scope ACTIVE: %d taxa may be reprocessed; changes to any other taxon are deferred.",
+             length(scope_spec$species), module = module)
+  }
+  n_deferred <- 0L; n_deferred_new <- 0L
+
   for (sp in species_universe) {
     sp_clean <- make_package_id(sp)
     sp_data  <- clean_data[clean_data$species == sp, , drop = FALSE]
 
     current_fp <- compute_species_fingerprint(sp_data)
     n_records  <- nrow(sp_data)
+    fp_at_source <- current_fp
 
     if (first_run) {
       outcome           <- "new"
@@ -330,14 +365,41 @@ detect_species_changes <- function(ctx, clean_data = NULL) {
       n_forced       <- n_forced + 1L
     }
 
+    # ── Out of scope: defer rather than reprocess ──
+    # "deferred": the data changed but the taxon was not approved for this run.
+    #   Its artifacts are inherited from source_version, and fingerprint_at_source
+    #   stays the SOURCE fingerprint, not the current one. That is what keeps the
+    #   change visible: the next run compares against the source again and still
+    #   sees the difference. Recording the current fingerprint there would make
+    #   the next run call the taxon "unchanged" and lose the pending change.
+    # "deferred_new": a taxon in no earlier revision and not approved. There is
+    #   nothing to inherit, so it has no package in this revision and no
+    #   source_version; the next run treats it as new again.
+    if (!in_scope(sp) && outcome == "reprocessed") {
+      outcome        <- "deferred"
+      source_version <- prior$source_version
+      fp_at_source   <- prior$source_fingerprint
+      change_summary <- sprintf("deferred: data changed vs v%s (%d records now); not in this run's species_scope",
+                                prior$source_version, n_records)
+      n_deferred     <- n_deferred + 1L
+    } else if (!in_scope(sp) && outcome == "new") {
+      outcome        <- "deferred_new"
+      source_version <- NA_character_
+      fp_at_source   <- NA_character_
+      change_summary <- sprintf("deferred: new taxon (%d records); not in this run's species_scope",
+                                n_records)
+      n_deferred_new <- n_deferred_new + 1L
+    }
+
     outcomes[[sp]] <- list(
-      species_clean        = sp_clean,
-      outcome              = outcome,
-      source_version       = source_version,
-      prior_source_version = prior_source_v,
-      fingerprint          = current_fp,
-      n_records            = n_records,
-      change_summary       = change_summary
+      species_clean         = sp_clean,
+      outcome               = outcome,
+      source_version        = source_version,
+      prior_source_version  = prior_source_v,
+      fingerprint           = current_fp,
+      fingerprint_at_source = fp_at_source,
+      n_records             = n_records,
+      change_summary        = change_summary
     )
 
     # Persist fingerprint file (audit deposit)
@@ -348,7 +410,8 @@ detect_species_changes <- function(ctx, clean_data = NULL) {
       n_records            = n_records,
       outcome              = outcome,
       source_version       = source_version,
-      prior_source_version = prior_source_v
+      prior_source_version = prior_source_v,
+      fingerprint_at_source = fp_at_source
     )
 
     if      (outcome == "new")         n_new         <- n_new         + 1L
@@ -366,9 +429,9 @@ detect_species_changes <- function(ctx, clean_data = NULL) {
 
   if (exists("log_info", mode = "function")) {
     log_info(sprintf(
-      "Phase 1.5 complete: total=%d, new=%d, reprocessed=%d, unchanged=%d, active=%d",
+      "Phase 1.5 complete: total=%d, new=%d, reprocessed=%d, unchanged=%d, deferred=%d, deferred_new=%d, active=%d",
       length(species_universe), n_new, n_reprocessed, n_unchanged,
-      length(active_species)),
+      n_deferred, n_deferred_new, length(active_species)),
       module = module)
     # Reported separately so the reprocessed count is never read as evidence of
     # that many data changes.

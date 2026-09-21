@@ -444,17 +444,23 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   
   # ── Sparse-versioning bootstrap (Session 3, refactor) ──────────────────────
   # Initialize the RunContext for downstream phase coordination. After this
-  # block, ctx$all_species is populated and clean_occurrences.tsv has been
-  # mirrored to the scaffolding dir for Phase 1.5 to read.
+  # block, ctx$all_species is populated and Phase 1.5 reads the cleaned input
+  # table from the run's WORK directory.
+  #
+  # The table used to be copied into <rev>/checkover/ for Phase 1.5 to read,
+  # and <rev>/ is exactly what gets delivered. Every delivery (1.0, 1.1, 1.2)
+  # therefore carried clean_occurrences.tsv: ~120k records with exact
+  # coordinates, ~66k of them confidentiality level 1 or 2, served by URL from
+  # the World of Crayfish web server until Lucian removed it (2026-09).
+  # Nothing with coordinates may be written under <rev>/ — the rule of the
+  # platform, and now enforced by tests/audit_packages.R.
   ctx <- RunContext_init(CONFIG, run_id = run_env$run_id)
   ctx$all_species <- sort(unique(result$clean_data$species[!is.na(result$clean_data$species)]))
-  
+  ctx$work_dir    <- run_env$run_dir   # ingest wrote clean_occurrences.tsv here
+
   if (!dir.exists(ctx$current_scaffolding_dir)) {
     dir.create(ctx$current_scaffolding_dir, recursive = TRUE, showWarnings = FALSE)
   }
-  file.copy(file.path(run_env$run_dir, "clean_occurrences.tsv"),
-            file.path(ctx$current_scaffolding_dir, "clean_occurrences.tsv"),
-            overwrite = TRUE)
   
   # Module 1B: Vernacular Names (on full dataset)
   cat("\n[MODULE 1B] Generating vernacular names...\n")
@@ -1066,7 +1072,12 @@ if (run_env$status %in% c("NEW", "RESUME")) {
     vernacular_lookup = VERNACULAR_LOOKUP,
     reports_dir = run_env$run_dir
   )
-  
+
+  # Coordinate-free list of the records behind this revision's packages. The
+  # branches hold only this revision's active species at this point, so the
+  # list covers exactly what was packaged.
+  write_records_used(ctx, list(result_indigenous, result_non_indigenous))
+
   # ============================================================
   # PHASE 7 COMPLETE
   # ============================================================

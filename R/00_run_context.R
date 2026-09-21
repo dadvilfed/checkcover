@@ -49,6 +49,37 @@
 # "checkover", "cache", "logs") and ignored by the consumer side.
 .VERSION_FOLDER_REGEX <- "^[0-9]+\\.[0-9]+$"
 
+#' Which code produced this run.
+#'
+#' Two facts that must not be conflated: the REVISION (framework_version, e.g.
+#' 1.3, a data refresh) and the SOFTWARE that computed it (a git tag, e.g.
+#' runtime-1.3). Resolved in order of authority:
+#'
+#'   1. config$code_tag            — set by a run file (the service passes it)
+#'   2. env CHECKOVER_CODE_VERSION — baked into the container image at build time
+#'   3. `git describe --tags --always --dirty` — a manual run from a checkout;
+#'      "-dirty" means uncommitted changes, which a published run should never
+#'      carry
+#'   4. "unknown"
+#'
+#' @param config The CONFIG list.
+#' @return character(1)
+resolve_code_version <- function(config = NULL) {
+  tag <- config$code_tag
+  if (!is.null(tag) && length(tag) == 1L && !is.na(tag) && nzchar(tag)) return(as.character(tag))
+
+  env <- Sys.getenv("CHECKOVER_CODE_VERSION", unset = "")
+  if (nzchar(env) && env != "unknown") return(env)
+
+  if (nzchar(Sys.which("git"))) {
+    g <- tryCatch(suppressWarnings(system2("git", c("describe", "--tags", "--always", "--dirty"),
+                                           stdout = TRUE, stderr = FALSE)),
+                  error = function(e) character(0))
+    if (length(g) == 1L && nzchar(g) && is.null(attr(g, "status"))) return(paste0("git:", g))
+  }
+  "unknown"
+}
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # RUN CONTEXT
@@ -108,6 +139,18 @@ RunContext_init <- function(config, run_id, now = Sys.time()) {
     # FALSE = normal; TRUE = force all; character vector = force those species.
     # Defaults to FALSE so an older config.R without the key still works.
     force_reprocess         = config$force_reprocess %||% FALSE,
+
+    # Which code produced this revision; written into every package and the
+    # manifest. See resolve_code_version().
+    code_version            = resolve_code_version(config),
+
+    # Option (b): only these taxa may be reprocessed; changes to any other taxon
+    # are deferred. NULL = every taxon (cohort semantics). See 01e.
+    species_scope           = config$species_scope %||% NULL,
+
+    # Where coordinate-bearing working files live: the run directory, OUTSIDE
+    # <rev>/. Set by the orchestrator once the run directory exists.
+    work_dir                = NULL,
 
     # Species universe (populated by Phase 1 = ingest, Phase 1.5 = change detection)
     all_species             = NULL,

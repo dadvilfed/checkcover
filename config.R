@@ -182,7 +182,23 @@ CONFIG <- list(
   #
   # Use for code-only changes, then SET IT BACK TO FALSE. Data changes need no
   # override — sparse versioning already handles those.
-  force_reprocess = FALSE
+  force_reprocess = FALSE,
+
+  # 12. Species scope (Phase 1.5)
+  #
+  #   NULL                      every taxon whose data changed is reprocessed
+  #   c("Astacus astacus", ...) only these taxa may be reprocessed
+  #
+  # With a scope, any OTHER taxon whose data changed is carried over from its
+  # source revision and recorded in the manifest as "deferred"; a taxon seen for
+  # the first time outside the scope is "deferred_new" and gets no package. The
+  # input is still the full cohort, because fingerprints and inheritance need
+  # the whole table. Taxa in force_reprocess are always in scope.
+  #
+  # This is how a World of Crayfish run reprocesses exactly what an admin
+  # approved, and the deferred list is the next request queue. Leave NULL for a
+  # full run such as the clean 1.0.
+  species_scope = NULL
 )
 
 # Required R packages, available from CRAN.

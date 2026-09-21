@@ -29,6 +29,8 @@ Rscript tests/test_unit.R
 | `test_dwc_ingest.R` | New DwC template header → internal columns, comma-decimals, `establishmentMeans`/`occurrenceOrigin` kept separate, voucher fields, derived `basisOfRecord` (real `map_woc_to_checkover`) | `dplyr`, `stringr` |
 | `test_narrative_integration.R` | A freshly generated narrative is numerically consistent with `package_metadata.json` — zero audit mismatches (bugs 0/1/2/3 + extinctions) | base R only |
 | `test_extinct_path.R` | Zero-active terminal narrative: extirpation statement, AOO=0/EOO=NA, mandatory data-state disclaimer, no basins layer; passes both audits | base R only |
+| `test_coordinate_free.R` | A revision folder carries no coordinates: the audit's coordinate scan flags binaries, coordinate columns/keys, lat/lon pairs and map points, and does not flag DOIs or range polygons; `records_used.tsv` has exactly `record_id, species, state` | `jsonlite` |
+| `test_species_scope.R` | `species_scope`: approved taxa reprocessed, others `deferred`/`deferred_new`; across two runs a deferred change is still seen (source fingerprint kept) | `digest`, `jsonlite`, `readr` |
 
 ## Notes
 

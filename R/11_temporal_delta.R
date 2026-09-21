@@ -91,9 +91,13 @@ species_temporal_dir <- function(species_clean, root_output_dir = NULL) {
 #' @return A safe filename component.
 #' @export
 clean_species_name <- function(species) {
-  s <- gsub("[^A-Za-z0-9_-]+", "_", as.character(species))
-  s <- gsub("_+", "_", s)
-  gsub("^_|_$", "", s)
+  # Delegates to make_package_id(): ONE slug rule for every per-species path.
+  # This used to be a second, different rule (every non-alphanumeric run -> "_")
+  # used for the temporal tree while packages used make_package_id(). They agree
+  # on every real WoC name today, but two rules for one name is how the WoC side
+  # ended up mis-matching taxa; the clean 1.0 restart (2026-09) makes this the
+  # moment to collapse them, since no older temporal folders need to be found.
+  make_package_id(species)
 }
 
 # Internal: sortable key for "v1.10" > "v1.2" comparison (numeric, not lexical)
