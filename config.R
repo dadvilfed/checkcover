@@ -6,9 +6,20 @@ CONFIG <- list(
   # Input file (Excel database)
   input_file = "WoC_1_0.tsv",
   
-  # Output directory
+  # Output directory. Holds revision folders (1.0/, 1.1/, ...) and NOTHING else:
+  # it is what a platform mirrors and installs, so it must never contain
+  # anything with coordinates.
   root_output_dir = "checkover_output",
-  
+
+  # Working state: runs/ (per-run work, including the cleaned input table),
+  # cache/ (reference layers), logs/, temporal/ (per-species occurrence
+  # snapshots) and _registry.json. runs/ and temporal/ carry coordinates, which
+  # is why this is a separate directory and must never sit inside
+  # root_output_dir. One state dir belongs to one output root: temporal/ is the
+  # history of that root's revisions. cache/ holds reference layers only and may
+  # be copied between state dirs.
+  state_dir = "checkover_state",
+
   # Version/Run ID (change to force new run)
   version = "production",
   
@@ -198,8 +209,18 @@ CONFIG <- list(
   # This is how a World of Crayfish run reprocesses exactly what an admin
   # approved, and the deferred list is the next request queue. Leave NULL for a
   # full run such as the clean 1.0.
-  species_scope = NULL
+  species_scope = NULL,
+
+  # 13. Code version recorded as provenance.code_version (optional)
+  #
+  # Leave NULL for a manual run: the version then comes from the container
+  # image or from `git describe`. A service run file passes the tag it deployed.
+  code_tag = NULL
 )
+
+# A run file (JSON) named by the environment variable CHECKOVER_RUN overrides
+# the settings above, so a service can run cheCkOVER without editing this file.
+# See README "Running as a service" and R/00_run_file.R.
 
 # Required R packages, available from CRAN.
 #

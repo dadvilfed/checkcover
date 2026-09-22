@@ -105,6 +105,10 @@ preflight_check <- function(config = NULL, strict = TRUE, module = "PREFLIGHT") 
     }
   }
 
+  # ── 5b. Working state, and what the output root may hold ──────────────────
+  lay <- check_state_layout(config)
+  for (i in seq_len(nrow(lay))) add(lay$severity[i], lay$item[i], lay$detail[i])
+
   # ── 6. Input columns ──────────────────────────────────────────────────────
   # Read the header only: the file can be hundreds of MB.
   if (!is.null(config$input_file) && file.exists(config$input_file)) {
@@ -139,9 +143,17 @@ preflight_check <- function(config = NULL, strict = TRUE, module = "PREFLIGHT") 
   .preflight_report(res, module = module)
 
   n_fatal <- sum(res$severity == "FATAL")
+
+  # A service run leaves the full list in <run home>/preflight.json, pass or
+  # refuse, for the runner to show on the workbench (R/00_run_file.R).
   if (strict && n_fatal > 0) {
-    stop(sprintf("Preflight found %d blocking problem(s) - see the report above. Nothing has been processed.",
-                 n_fatal), call. = FALSE)
+    msg <- sprintf("Preflight found %d blocking problem(s) - see the report above. Nothing has been processed.",
+                   n_fatal)
+    if (exists("refuse_run", mode = "function")) refuse_run(res, msg, config)
+    stop(msg, call. = FALSE)
+  }
+  if (strict && exists("write_preflight_file", mode = "function")) {
+    write_preflight_file(config, res, "passed")
   }
 
   invisible(res)
@@ -175,4 +187,110 @@ preflight_check <- function(config = NULL, strict = TRUE, module = "PREFLIGHT") 
   cat("\n  Every problem found is listed above, so they can be fixed in one pass\n")
   cat("  rather than one run at a time.\n\n")
   invisible(NULL)
+}
+
+#' What the output root and the state dir hold, checked before a run.
+#'
+#' The output root is what a platform mirrors and installs, so it may hold
+#' revision folders only; working state lives in state_dir (UVT server setup,
+#' sections 05-07). And one state dir belongs to one output root: temporal/ is
+#' the history of that root's revisions, and reading another series' history
+#' compares every taxon against the wrong baseline without raising any error.
+#'
+#' @return A data frame of findings (severity, item, detail), possibly empty.
+check_state_layout <- function(config) {
+  f <- list()
+  add <- function(severity, item, detail) {
+    f[[length(f) + 1L]] <<- data.frame(severity = severity, item = item,
+                                       detail = detail, stringsAsFactors = FALSE)
+  }
+  done <- function() {
+    if (length(f)) do.call(rbind, f) else
+      data.frame(severity = character(), item = character(), detail = character(),
+                 stringsAsFactors = FALSE)
+  }
+
+  out <- config$root_output_dir
+  if (is.null(out) || !nzchar(out)) return(done())
+  service <- !is.null(config$service)
+  rev_rx  <- "^[0-9]+\\.[0-9]+$"
+
+  # ── What the output root holds ──
+  if (dir.exists(out)) {
+    entries <- setdiff(list.files(out, all.files = TRUE, no.. = TRUE),
+                       ".preflight_write_test")
+    is_rev <- grepl(rev_rx, entries) & dir.exists(file.path(out, entries))
+    other  <- entries[!is_rev]
+    if (length(other) > 0L) {
+      coord <- intersect(other, c("runs", "temporal"))
+      add(if (service) "FATAL" else "WARNING", "root_output_dir contents",
+          sprintf(paste0(
+            "'%s' holds %s besides revision folders. The output root is mirrored ",
+            "and installed as it is, so it must hold revision folders only.%s ",
+            "Move working state to state_dir - see README 'Where things live'."),
+            out, paste(sprintf("'%s'", other), collapse = ", "),
+            if (length(coord)) sprintf(" %s hold%s record coordinates.",
+                                       paste(coord, collapse = " and "),
+                                       if (length(coord) == 1L) "s" else "")
+            else ""))
+    }
+  }
+
+  state <- config$state_dir
+  if (is.null(state) || !nzchar(state)) return(done())
+
+  # ── The state dir must not live inside the output root ──
+  .abs <- function(p) {
+    p <- gsub("\\\\", "/", normalizePath(p, winslash = "/", mustWork = FALSE))
+    if (!grepl("^(/|[A-Za-z]:/)", p)) p <- file.path(normalizePath(getwd(), winslash = "/"), p)
+    sub("/+$", "", p)
+  }
+  a_out <- .abs(out); a_state <- .abs(state)
+  if (identical(a_state, a_out) || startsWith(a_state, paste0(a_out, "/"))) {
+    add("FATAL", "state_dir", sprintf(paste0(
+      "'%s' is inside root_output_dir '%s'. Working state holds record ",
+      "coordinates, and the output root is what gets mirrored and installed."),
+      state, out))
+  }
+
+  # ── The state dir belongs to this output root ──
+  revs <- if (dir.exists(out)) {
+    d <- list.dirs(out, recursive = FALSE, full.names = FALSE); d[grepl(rev_rx, d)]
+  } else character(0)
+  tdir   <- file.path(state, "temporal")
+  # After a run that did not complete, temporal/ holds that run's provisional
+  # writes and the run about to start restores the checkpoint first (see
+  # temporal_checkpoint_open()), so judge the history it will restore.
+  ck     <- file.path(state, "temporal.checkpoint")
+  t_eff  <- if (dir.exists(ck)) file.path(ck, "temporal") else tdir
+  n_hist <- if (dir.exists(t_eff)) length(list.dirs(t_eff, recursive = FALSE)) else 0L
+  legacy <- file.path(out, "temporal")
+
+  if (length(revs) == 0L && n_hist > 0L) {
+    add("FATAL", "state_dir", sprintf(paste0(
+      "'%s' holds temporal history for %d taxa, but root_output_dir '%s' has no ",
+      "revisions: the history belongs to another series. Use an empty state_dir. ",
+      "Its cache/ holds reference layers only and may be copied into the new one."),
+      tdir, n_hist, out))
+  }
+  if (length(revs) > 0L && n_hist == 0L && dir.exists(legacy)) {
+    add("FATAL", "state_dir", sprintf(paste0(
+      "the temporal history of '%s' is still in the old place. Move '%s' to '%s' ",
+      "before running; otherwise every taxon's temporal record restarts as a baseline."),
+      out, legacy, tdir))
+  } else if (length(revs) > 0L && n_hist == 0L && isTRUE(config$temporal$enabled)) {
+    add("WARNING", "state_dir", sprintf(paste0(
+      "root_output_dir has revisions (%s) but '%s' holds no temporal history, ",
+      "so every taxon's temporal record restarts as a baseline."),
+      paste(revs, collapse = ", "), tdir))
+  }
+
+  if (dir.exists(state)) {
+    probe <- file.path(state, ".preflight_write_test")
+    okw <- tryCatch({ writeLines("x", probe); unlink(probe); TRUE },
+                    error = function(e) FALSE, warning = function(w) FALSE)
+    if (!okw) add("FATAL", "state_dir", sprintf("'%s' is not writable.", state))
+  }
+
+  done()
 }

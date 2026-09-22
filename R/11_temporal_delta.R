@@ -28,7 +28,7 @@
 #   WDPA_name       →  protected_area
 #
 # DIRECTORY LAYOUT (decoupled from per-run folders for cross-run version continuity):
-#   {root_output_dir}/temporal/{species_clean}/
+#   {state_dir}/temporal/{species_clean}/   (NOT the output root: snapshots carry coordinates)
 #       {species_clean}_v1.0.md            ← canonical narrative
 #       {species_clean}_v1.0.json          ← metrics + delta summary (Section 6)
 #       {species_clean}_occurrences_v1.0.rds  ← snapshot for next-version comparison
@@ -53,18 +53,20 @@ suppressPackageStartupMessages({
 
 #' Get the temporal artifacts root directory
 #'
-#' @param root_output_dir Top-level cheCkOVER output directory; defaults to
-#'   CONFIG$root_output_dir if available.
+#' NB despite the parameter name, the pipeline passes the STATE dir here
+#' (CONFIG$state_dir), never the output root: the per-species snapshots carry
+#' record coordinates, and the output root is what gets mirrored and installed
+#' (UVT server setup, 2026-09). The name is kept because every temporal function
+#' threads it through; the default below resolves to the state dir.
+#'
+#' @param root_output_dir Directory holding temporal/: the STATE dir; defaults to
+#'   CONFIG$state_dir if available.
 #' @return Absolute path to the temporal artifacts root.
 #' @export
 temporal_root_dir <- function(root_output_dir = NULL) {
   if (is.null(root_output_dir)) {
-    if (exists("CONFIG", envir = .GlobalEnv) &&
-        !is.null(.GlobalEnv$CONFIG$root_output_dir)) {
-      root_output_dir <- .GlobalEnv$CONFIG$root_output_dir
-    } else {
-      root_output_dir <- "checkover_output"
-    }
+    cfg <- if (exists("CONFIG", envir = .GlobalEnv)) .GlobalEnv$CONFIG else NULL
+    root_output_dir <- cfg$state_dir %||% "checkover_state"
   }
   file.path(root_output_dir, "temporal")
 }

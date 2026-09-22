@@ -30,6 +30,7 @@ Rscript tests/test_unit.R
 | `test_narrative_integration.R` | A freshly generated narrative is numerically consistent with `package_metadata.json` — zero audit mismatches (bugs 0/1/2/3 + extinctions) | base R only |
 | `test_extinct_path.R` | Zero-active terminal narrative: extirpation statement, AOO=0/EOO=NA, mandatory data-state disclaimer, no basins layer; passes both audits | base R only |
 | `test_coordinate_free.R` | A revision folder carries no coordinates: the audit's coordinate scan flags binaries, coordinate columns/keys, lat/lon pairs and map points, and does not flag DOIs or range polygons; `records_used.tsv` has exactly `record_id, species, state` | `jsonlite` |
+| `test_run_file.R` | Service mode: the `CHECKOVER_RUN` run file overrides `config.R` and a bad one is refused with every problem in `preflight.json`; exit codes 0/1/2 and `status.json` from real child R processes; output root holds revisions only, a state dir belongs to one output root; the temporal history rolls back after a run that did not complete | `jsonlite` |
 | `test_species_scope.R` | `species_scope`: approved taxa reprocessed, others `deferred`/`deferred_new`; across two runs a deferred change is still seen (source fingerprint kept) | `digest`, `jsonlite`, `readr` |
 
 ## Notes

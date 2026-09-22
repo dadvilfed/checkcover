@@ -12,11 +12,20 @@
 # provenance.code_version. Build only from a tag: the image carries no .git, so
 # this build argument is the only record of which code computed a revision.
 #
+# A service run (RUNBOOK.md): the run file overrides config.R, so the image is
+# never rebuilt per run. Four mounts; podman takes the same arguments.
+#
 #   docker run --rm \
-#     -v "$PWD/data:/work/data:ro" \
-#     -v "$PWD/spatial_data:/work/spatial_data:ro" \
-#     -v "$PWD/checkover_output:/work/checkover_output" \
+#     -e CHECKOVER_RUN=/data/runs/<run_id>/run.json \
+#     -v /data/spatial:/work/spatial_data:ro \
+#     -v /data/output:/data/output \
+#     -v /data/state:/data/state \
+#     -v /data/runs/<run_id>:/data/runs/<run_id> \
 #     checkover:runtime-1.3
+#
+#   /data/output  revision folders only - what is mirrored and installed
+#   /data/state   cache/, temporal/, logs/, _registry.json - carries coordinates
+#   /data/runs/<run_id>  run.json, input.tsv, run.log, status.json, work/
 #
 # Occurrence data and reference layers are deliberately NOT baked into the
 # image — they are mounted at run time. See README "Data availability".

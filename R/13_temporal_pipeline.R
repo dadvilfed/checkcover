@@ -5,7 +5,7 @@
 # **single-version-per-species, nested-scope-blocks** storage architecture.
 #
 # Storage layout (per species):
-#   {root_output_dir}/temporal/{species_clean}/
+#   {state_dir}/temporal/{species_clean}/   (NOT the output root: snapshots carry coordinates)
 #       {species_clean}_v1.X.md            full canonical narrative + Section 6
 #       {species_clean}_v1.X.json          metrics + delta_data (nested scopes)
 #       {species_clean}_occurrences_v1.X.rds  full per-species snapshot

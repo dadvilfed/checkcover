@@ -202,7 +202,9 @@ enrich_with_feow <- function(result, output_dir = "checkover_output",
           } else {
             bb <- sf::st_bbox(c(xmin = xmin, ymin = ymin, xmax = xmax, ymax = ymax),
                               crs = sf::st_crs(result$clean_sf))
-            log_info("Cropping FEOW to bbox [%.3f, %.3f, %.3f, %.3f].",
+            # Whole degrees only: each edge of this box is an exact record
+            # coordinate, and the log leaves the server as run progress.
+            log_info("Cropping FEOW to bbox [%.0f, %.0f, %.0f, %.0f] (rounded).",
                      xmin, ymin, xmax, ymax, module = module)
             feow_min <- tryCatch(suppressWarnings(sf::st_crop(feow_min, bb)),
                                  error = function(e) { log_warn("FEOW crop failed.", module = module); feow_min })

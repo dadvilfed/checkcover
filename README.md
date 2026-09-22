@@ -17,6 +17,7 @@ It was built for the [World of Crayfish](https://world.crayfish.ro) database
 ## Table of contents
 
 - [What it produces](#what-it-produces)
+  - [Where things live](#where-things-live)
 - [Design principles](#design-principles)
 - [Installation](#installation)
 - [Reference data](#reference-data)
@@ -24,6 +25,7 @@ It was built for the [World of Crayfish](https://world.crayfish.ro) database
 - [Running the pipeline](#running-the-pipeline)
   - [Configuration reference](#configuration-reference)
   - [Parallelisation](#parallelisation)
+- [Running as a service](#running-as-a-service)
 - [Versioning and change detection](#versioning-and-change-detection)
   - [Outcomes](#outcomes)
   - [Restricting a run to approved taxa](#restricting-a-run-to-approved-taxa)
@@ -61,21 +63,49 @@ outside the species namespace so a consuming platform can treat every
 **A revision folder carries no coordinates.** `<root>/<version>/` is what a
 platform installs, so nothing in it may hold a record location: not a package,
 not the scaffolding, not a log. The cleaned input table (`clean_occurrences.tsv`)
-is a run input. It stays in the run's work directory, `<root>/runs/<run_id>/`,
-and is never copied into the revision. Revisions built before 2026-09 did copy
-it into `<version>/checkover/`; do not republish them.
+is a run input. It stays in the run's work directory and is never copied into
+the revision. Revisions built before 2026-09 did copy it into
+`<version>/checkover/`; do not republish them.
 
 What a platform gets instead is `checkover/records_used.tsv`: one row per record
 the run used, with exactly three columns — `record_id`, `species`, `state`
 (`active`, `suppressed` or `extinct`). It says which records stand behind each
 package without saying where they are.
 
-> **Publish the revision folders, not `<root>`.** `runs/`, `cache/`, `logs/`,
-> `temporal/` and `_registry.json` under `<root>` are working state, and
-> `runs/` and `temporal/` hold coordinates. Mirror or publish
-> `<root>/<version>/` folders only.
+### Where things live
 
-The run directory also carries an audit of what was discarded during ingest:
+Two directories, never one inside the other:
+
+| | Setting | Holds | Coordinates |
+|---|---|---|---|
+| **Output root** | `root_output_dir` | revision folders `1.0/`, `1.1/`, … and **nothing else** | none, enforced by the audit |
+| **State dir** | `state_dir` | `runs/<run_id>/` (work files, incl. `clean_occurrences.tsv`), `cache/` (reference layers), `logs/`, `temporal/` (per-species occurrence snapshots), `_registry.json` | `runs/` and `temporal/` |
+
+The output root is what a platform mirrors and installs, so it holds revision
+folders only. The preflight warns about anything else there, and a service run
+refuses to start.
+
+**A state dir belongs to one output root.** `temporal/` is the history of that
+root's revisions, and comparing taxa against another series' history would give
+wrong temporal deltas without any error. The preflight refuses a state dir whose
+history has no revisions to match. `cache/` holds reference layers only, and
+can be copied into a new state dir to save hours of rebuilding.
+
+**Moving from the old layout.** Until 2026-09 all of this sat inside the output
+root. To keep using such an output root, move the working state out:
+
+```bash
+mkdir -p checkover_state
+mv checkover_output/runs checkover_output/cache checkover_output/logs \
+   checkover_output/temporal checkover_output/_registry.json checkover_state/
+```
+
+For a fresh series (such as the clean 1.0), start with an empty output root and
+an empty state dir, copying only `cache/`.
+
+The run's work directory (`<state_dir>/runs/<run_id>/`, or `work/` in the run
+home for a [service run](#running-as-a-service)) also carries an audit of what
+was discarded during ingest:
 
 ```
 ingest_validation_report.tsv   count and reason for every removed record
@@ -255,10 +285,12 @@ has a working default.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `input_file` | `"WoC_1_1.tsv"` | Occurrence export to process. |
-| `root_output_dir` | `"checkover_output"` | Everything is written under here. |
-| `framework_version` | `"1.1"` | Output folder `<root>/<version>/`. Must match `^\d+\.\d+$`. |
+| `input_file` | `"WoC_1_0.tsv"` | Occurrence export to process. |
+| `root_output_dir` | `"checkover_output"` | Revision folders only. See [Where things live](#where-things-live). |
+| `state_dir` | `"checkover_state"` | Working state: runs, cache, logs, temporal history. Never inside `root_output_dir`. |
+| `framework_version` | `"1.0"` | Output folder `<root>/<version>/`. Must match `^\d+\.\d+$`. |
 | `version` | `"production"` | Run id. **Change it to force a re-ingest** — reusing it resumes from cached data. |
+| `code_tag` | `NULL` | Recorded as `provenance.code_version`. Leave `NULL`; see [Which code built a revision](#which-code-built-a-revision). |
 
 **Reference layers** (`CONFIG$spatial`)
 
@@ -337,6 +369,74 @@ citation fields. Legacy WoC headers are still accepted via an alias table
 > newline will shift or split a row. cheCkOVER detects the resulting nonsense
 > geography and routes those records to the fallback, but it is far better to
 > escape them at export time.
+
+---
+
+## Running as a service
+
+A platform such as World of Crayfish runs cheCkOVER without editing code. It
+writes a **run file** and points the environment variable `CHECKOVER_RUN` at
+it. The run file's values override `config.R`; without it, `config.R` is the
+whole configuration, exactly as for a manual run.
+
+```json
+{ "run_id":            "run_20261015_a1b2",
+  "framework_version": "1.3",
+  "input_file":        "/data/runs/run_20261015_a1b2/input.tsv",
+  "root_output_dir":   "/data/output",
+  "state_dir":         "/data/state",
+  "species_scope":     ["Austropotamobius_fulcisianus"],
+  "code_tag":          "runtime-1.3" }
+```
+
+- `framework_version`, `input_file`, `root_output_dir` and `state_dir` are
+  **required**: a service run never falls back to `config.R` for them.
+- `framework_version` is a **string**. As a JSON number, `1.10` would reach R
+  as `1.1`.
+- Any other setting of `config.R` may be given. An object merges into its
+  section, e.g. `"spatial": {"hydro_dir": "/data/spatial/hydrobasins"}`.
+- An unknown key is refused, not ignored, so a typo cannot silently become a
+  `config.R` default.
+- `run_id` defaults to the name of the folder holding the run file.
+
+That folder is the **run home**, and everything the run writes outside the
+revision goes there:
+
+| File | Written by | What it is |
+|---|---|---|
+| `run.json` | the runner | the run file |
+| `input.tsv` | the runner | the frozen input table |
+| `run.log` | cheCkOVER | the log, for progress. Prints record ids, never coordinates |
+| `preflight.json` | cheCkOVER | every problem the preflight found; `"status": "refused"` means nothing ran |
+| `status.json` | cheCkOVER | `running`, `succeeded`, `failed` or `refused`, with the error message |
+| `work/` | cheCkOVER | working files, including coordinates. Never uploaded |
+
+**Exit codes.**
+
+| Code | Meaning | What is left behind |
+|---|---|---|
+| `0` | succeeded | a complete `<root>/<version>/` |
+| `1` | failed during the run | possibly a partial `<root>/<version>/`, never to be uploaded |
+| `2` | refused before processing | nothing in the output root; the reasons are in `preflight.json` |
+
+**A service run never writes into an existing revision folder.** The platform
+always hands out a revision number that does not exist yet, so a folder that is
+already there is a failed attempt's partial output. The run refuses (exit 2)
+until the runner deletes it.
+
+**A retry is safe.** The temporal history is transactional across a run: it is
+checkpointed before processing, and the checkpoint is kept until the run
+succeeds. A run that finds a checkpoint knows the previous run did not
+complete, whatever the cause, and restores the history first. So after any
+failure, delete the partial revision folder and `work/`, and rerun the same
+run file.
+
+**One run at a time per state dir.** A revision inherits from the one before
+it, and runs share `temporal/`, so two runs must never overlap.
+
+The step-by-step procedures — starting a run, a run that dies mid-way, a full
+disk, rebuilding the image, a reboot during a run — are in
+[RUNBOOK.md](RUNBOOK.md).
 
 ---
 
@@ -497,9 +597,9 @@ Rscript tests/run_all.R                              # unit + regression suite
 Rscript tests/audit_packages.R checkover_output/1.0  # per-package integrity
 ```
 
-**`tests/run_all.R`** — every `tests/test_*.R` (29 at present), covering the
+**`tests/run_all.R`** — every `tests/test_*.R` (30 at present), covering the
 classifier, extinction handling, the geographic fallback, vocabulary, Darwin
-Core mapping, fingerprinting, species scope, basin resolution, narrative
+Core mapping, fingerprinting, species scope, service mode, basin resolution, narrative
 consistency and the coordinate-free rule. Each runs in its own process.
 
 **`tests/audit_packages.R`** — for every species package, asserts the expected

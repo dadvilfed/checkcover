@@ -4,10 +4,16 @@
 # Aggregated counts and summary statistics only — no raw coordinates.
 #
 # Usage:
-#   Rscript extract_manuscript_tables.R [base_dir] [version] [raw_input_tsv]
-#   e.g. Rscript extract_manuscript_tables.R checkover_output 1.0 WoC_1_0.tsv
+#   Rscript extract_manuscript_tables.R [base_dir] [version] [raw_input_tsv] [state_dir] [clean_table]
+#   e.g. Rscript extract_manuscript_tables.R checkover_output 1.0 WoC_1_0.tsv checkover_state
 #
-# Writes <base_dir>/manuscript_tables.{md,json,tsv}
+# The cleaned input table (used only for one cross-check) is working state, so
+# it is looked up in state_dir: the run that <state_dir>/_registry.json records
+# for this version, or clean_table when given, or the pre-2026-09 location
+# inside the revision.
+#
+# Writes ./manuscript_tables.{md,json,tsv} in the CURRENT directory, never into
+# base_dir (base_dir is mirrored).
 
 suppressPackageStartupMessages(library(jsonlite))
 # Canonical vocabulary, so the country-canon check below can run. Optional: the
@@ -19,6 +25,25 @@ args      <- commandArgs(trailingOnly = TRUE)
 base_dir  <- if (length(args) >= 1) args[1] else "checkover_output"
 VER       <- if (length(args) >= 2) args[2] else "1.0"
 RAW_TSV   <- if (length(args) >= 3) args[3] else "WoC_1_0.tsv"
+STATE     <- if (length(args) >= 4) args[4] else "checkover_state"
+CLEAN     <- if (length(args) >= 5) args[5] else NULL
+
+# Where the cleaned input table of a revision lives: the explicit path, else the
+# run recorded for that revision in the state dir's registry, else the
+# pre-2026-09 location inside the revision.
+find_clean_table <- function(base_dir, ver, state_dir, explicit = NULL) {
+  if (!is.null(explicit) && nzchar(explicit)) return(explicit)
+  reg <- file.path(state_dir, "_registry.json")
+  if (file.exists(reg)) {
+    r <- tryCatch(jsonlite::read_json(reg, simplifyVector = FALSE), error = function(e) list())
+    for (e in rev(Filter(function(e) identical(e$framework_version, ver), r))) {
+      p <- file.path(e$path, "clean_occurrences.tsv")
+      if (file.exists(p)) return(p)
+    }
+  }
+  old <- file.path(base_dir, ver, "checkover", "clean_occurrences.tsv")
+  if (file.exists(old)) old else NULL
+}
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 .n     <- function(x) suppressWarnings(as.numeric(x))
@@ -116,8 +141,8 @@ top_sum   <- sum(top$rec_non, na.rm = TRUE)
 # with the version. Previously this comparison value was HARDCODED (55,022),
 # so a new run reported a phantom 72-record gap against its own correct total.
 occ_non <- NA_integer_
-occ_p <- file.path(base_dir, VER, "checkover", "clean_occurrences.tsv")
-if (file.exists(occ_p)) {
+occ_p <- find_clean_table(base_dir, VER, STATE, CLEAN)
+if (!is.null(occ_p) && file.exists(occ_p)) {
   oc <- tryCatch(read.delim(occ_p, sep = "\t", header = TRUE, stringsAsFactors = FALSE,
                             quote = "", colClasses = "character", na.strings = c("", "NA")),
                  error = function(e) NULL)
@@ -357,7 +382,7 @@ if (n_eoo_zero > 0) {
   add("")
 }
 
-writeLines(L, file.path(base_dir, "manuscript_tables.md"), useBytes = TRUE)
+writeLines(L, "manuscript_tables.md", useBytes = TRUE)
 
 out <- list(
   version = VER, generated = as.character(Sys.Date()),
@@ -373,10 +398,10 @@ out <- list(
     d[, c("species","rec_ind","eoo_ind","aoo_ind","n_countries","n_continents","countries")]),
   denominator_check = list(sum_packages = total_non, clean_occurrences = occ_non)
 )
-write_json(out, file.path(base_dir, "manuscript_tables.json"), pretty = TRUE,
+write_json(out, "manuscript_tables.json", pretty = TRUE,
            auto_unbox = TRUE, na = "null")
-write.table(df, file.path(base_dir, "manuscript_tables.tsv"), sep = "\t",
+write.table(df, "manuscript_tables.tsv", sep = "\t",
             row.names = FALSE, quote = TRUE)
 
 cat(paste(L, collapse = "\n"), "\n")
-cat(sprintf("\nWrote %s/manuscript_tables.{md,json,tsv}\n", base_dir))
+cat(sprintf("\nWrote %s/manuscript_tables.{md,json,tsv}\n", getwd()))

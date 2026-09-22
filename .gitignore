@@ -69,6 +69,17 @@ spatial_data/
 checkover_output/
 *.rar
 *.zip
+# Working state: runs/ holds the cleaned input table and temporal/ holds
+# per-species occurrence snapshots, both WITH exact coordinates.
+checkover_state/
+# Aggregate reports written by extract_manuscript_*.R into the current directory.
+manuscript_summary.*
+manuscript_tables.*
+
+# --- Server details --------------------------------------------------------
+# tools/collect_server_facts.sh reports on a university server (hostnames,
+# paths, software versions). Useful to send to a colleague, not to publish.
+server_facts_*.txt
 
 # --- Manuscript ------------------------------------------------------------
 # Kept out of the code repo; lives with the journal submission.

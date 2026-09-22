@@ -23,24 +23,53 @@ cat("==============================================================\n\n")
 # Step 1: Load configuration
 cat("Loading configuration...\n")
 source("config.R")
+
+# A run file named by CHECKOVER_RUN overrides config.R (service mode); without
+# one, CONFIG is exactly config.R. The exit handler gives a non-interactive run
+# the service exit codes: 0 succeeded, 1 failed, 2 refused before processing.
+source("R/00_run_file.R")
+install_exit_handler()
+CONFIG <- apply_run_file(CONFIG)
+if (!is.null(CONFIG$service)) {
+  cat(sprintf("Service run '%s' from %s\n", CONFIG$service$run_id, CONFIG$service$run_file))
+}
+
 # -- Framework-version guard ------------------------------------------------
 # Refuses to start if this framework_version already has output on disk.
 # Prevents silently producing a multi-hour run mislabeled with the wrong
 # version (e.g. forgetting to bump framework_version between databases).
 # To genuinely re-run an existing version: delete its dir first, then run.
+#
+# A service run is stricter: the folder must not exist at all. The platform
+# always hands out a revision number that does not exist yet, so a folder that
+# is there is a failed run's partial output, and a retry must start clean
+# (RUNBOOK.md).
 local({
   .fv      <- CONFIG$framework_version
   .fv_dir  <- file.path(CONFIG$root_output_dir, .fv)
   .fv_man  <- file.path(.fv_dir, "checkover", "manifest.json")
+  if (!is.null(CONFIG$service) && dir.exists(.fv_dir)) {
+    refuse_run(data.frame(
+      severity = "FATAL", item = "framework_version",
+      detail = sprintf(paste0(
+        "'%s' already exists. A service run never writes into an existing ",
+        "revision folder; if it is a failed run's partial output, delete it ",
+        "and retry (RUNBOOK.md)."), .fv_dir),
+      stringsAsFactors = FALSE),
+      sprintf("Revision folder '%s' already exists.", .fv_dir), CONFIG)
+  }
   if (file.exists(.fv_man)) {
-    stop(sprintf(paste0(
+    refuse_run(data.frame(
+      severity = "FATAL", item = "framework_version",
+      detail = sprintf("'%s' already has output (%s).", .fv, .fv_man),
+      stringsAsFactors = FALSE),
+      sprintf(paste0(
       "\n\n  HALTED: framework_version '%s' already has output.\n",
       "  Found: %s\n\n",
       "  You probably forgot to bump CONFIG$framework_version for a new database.\n",
       "  - New database/version  -> set framework_version to the next number in config.R\n",
       "  - Intentional re-run    -> delete '%s' first, then run again\n"),
-      .fv, .fv_man, .fv_dir),
-      call. = FALSE)
+      .fv, .fv_man, .fv_dir), CONFIG)
   }
 })
 # ---------------------------------------------------------------------------
@@ -48,10 +77,15 @@ local({
 # Step 2: Initialize logging FIRST (before loading packages)
 cat("Initializing logger...\n")
 source("R/00_logging.R")
+# Logs are working state, never under the output root. A service run logs to
+# <run home>/run.log, which the runner tails for progress.
 init_logger(
-  log_dir = file.path(CONFIG$root_output_dir, "logs"),
+  log_dir   = if (is.null(CONFIG$service)) file.path(state_dir_of(CONFIG), "logs")
+              else CONFIG$service$run_home,
+  log_file  = CONFIG$service$log_file,
   log_level = "INFO"
 )
+write_run_status(CONFIG, "running")
 
 log_info("========================================", module = "MAIN")
 log_info("cheCkCOVER Analysis Started", module = "MAIN")
@@ -101,8 +135,13 @@ check_github_packages <- function(module = "PKG_LOADER") {
     cat("  through. Stopping now rather than after the spatial joins.\n\n")
     log_error("Missing required GitHub package(s): %s",
               paste(blocking, collapse = ", "), module = module)
-    stop("Missing required GitHub package(s): ", paste(blocking, collapse = ", "),
-         ". See the install commands above.", call. = FALSE)
+    refuse_run(data.frame(
+      severity = "FATAL", item = paste(blocking, "package"),
+      detail = sprintf("not installed. Install with remotes::install_github(\"%s\").",
+                       unname(spec[blocking])),
+      stringsAsFactors = FALSE),
+      paste0("Missing required GitHub package(s): ", paste(blocking, collapse = ", "),
+             ". See the install commands above."), CONFIG)
   }
 
   cat("  All of the above are optional; continuing.\n\n")
@@ -149,7 +188,10 @@ load_packages <- function(packages, module = "PKG_LOADER") {
     if (!all(loaded)) {
       failed <- packages[!loaded]
       log_error("Failed packages: %s", paste(failed, collapse = ", "), module = module)
-      stop("Cannot proceed without required packages.")
+      refuse_run(data.frame(
+        severity = "FATAL", item = paste(failed, "package"),
+        detail = "could not be installed or loaded.", stringsAsFactors = FALSE),
+        "Cannot proceed without required packages.", CONFIG)
     }
     
     log_info("Successfully loaded all %d packages.", length(packages), module = module)
@@ -233,9 +275,9 @@ cat("Initializing run manager...\n")
   writeLines(fingerprint, file.path(run_dir, "_data_fingerprint.txt"))
 }
 
-.update_registry <- function(root_output_dir, run_id, input_file, status,
+.update_registry <- function(state_dir, framework_version, run_id, input_file, status,
                              run_dir, fingerprint) {
-  registry_file <- file.path(root_output_dir, "_registry.json")
+  registry_file <- file.path(state_dir, "_registry.json")
   current_reg <- list()
   if (file.exists(registry_file)) {
     try(current_reg <- jsonlite::read_json(registry_file,
@@ -244,6 +286,7 @@ cat("Initializing run manager...\n")
   }
   current_reg[[length(current_reg) + 1L]] <- list(
     run_id      = run_id,
+    framework_version = framework_version %||% NA_character_,
     timestamp   = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
     input_file  = basename(input_file),
     status      = status,
@@ -254,12 +297,28 @@ cat("Initializing run manager...\n")
                        auto_unbox = TRUE)
 }
 
-init_run_manager <- function(input_file, config_list, root_output_dir) {
+init_run_manager <- function(input_file, config_list, state_dir) {
   module <- "RUN_MANAGER"
   
-  if (!dir.exists(root_output_dir)) dir.create(root_output_dir, recursive = TRUE)
-  
-  runs_root <- file.path(root_output_dir, "runs")
+  if (!dir.exists(state_dir)) dir.create(state_dir, recursive = TRUE)
+
+  # A service run's working directory is fixed by its run file:
+  # <run home>/work/. The runner owns that directory, including deleting it
+  # before a retry (RUNBOOK.md), so there is no resume-by-fingerprint here.
+  svc <- config_list$service
+  if (!is.null(svc)) {
+    run_dir    <- svc$work_dir
+    current_fp <- .compute_data_fingerprint(input_file)
+    dir.create(run_dir, recursive = TRUE, showWarnings = FALSE)
+    .write_data_fingerprint(run_dir, current_fp)
+    .update_registry(state_dir, config_list$framework_version, svc$run_id, input_file, "SERVICE", run_dir, current_fp)
+    log_info("Service run %s; working files in %s", svc$run_id, run_dir, module = module)
+    return(list(run_id = svc$run_id, run_dir = run_dir, status = "NEW",
+                data_changed = NA,
+                shared_cache_dir = file.path(state_dir, "cache")))
+  }
+
+  runs_root <- file.path(state_dir, "runs")
   if (!dir.exists(runs_root)) dir.create(runs_root, recursive = TRUE)
   
   base_prefix <- config_list$version %||% "default"
@@ -281,23 +340,23 @@ init_run_manager <- function(input_file, config_list, root_output_dir) {
       stored_fp <- .read_stored_fingerprint(run_dir)
       if (!is.na(stored_fp) && !is.na(current_fp) && stored_fp == current_fp) {
         log_info("Resuming incomplete run (same data): %s", run_id, module = module)
-        .update_registry(root_output_dir, run_id, input_file, "RESUME",
+        .update_registry(state_dir, config_list$framework_version, run_id, input_file, "RESUME",
                          run_dir, current_fp)
         return(list(run_id = run_id, run_dir = run_dir, status = "RESUME",
                     data_changed = FALSE,
-                    shared_cache_dir = file.path(root_output_dir, "cache")))
+                    shared_cache_dir = file.path(state_dir, "cache")))
       }
     }
     
     log_info("First run: %s", run_id, module = module)
     dir.create(run_dir, recursive = TRUE, showWarnings = FALSE)
     .write_data_fingerprint(run_dir, current_fp)
-    .update_registry(root_output_dir, run_id, input_file, "NEW",
+    .update_registry(state_dir, config_list$framework_version, run_id, input_file, "NEW",
                      run_dir, current_fp)
     
     return(list(run_id = run_id, run_dir = run_dir, status = "NEW",
                 data_changed = FALSE,
-                shared_cache_dir = file.path(root_output_dir, "cache")))
+                shared_cache_dir = file.path(state_dir, "cache")))
   }
   
   # 3. Compare fingerprints against latest completed run
@@ -306,11 +365,11 @@ init_run_manager <- function(input_file, config_list, root_output_dir) {
   if (!is.na(stored_fp) && !is.na(current_fp) && stored_fp == current_fp) {
     # ── Same data → RESUME ──
     log_info("Data unchanged. RESUME mode: %s", latest$run_id, module = module)
-    .update_registry(root_output_dir, latest$run_id, input_file, "RESUME",
+    .update_registry(state_dir, config_list$framework_version, latest$run_id, input_file, "RESUME",
                      latest$path, current_fp)
     return(list(run_id = latest$run_id, run_dir = latest$path,
                 status = "RESUME", data_changed = FALSE,
-                shared_cache_dir = file.path(root_output_dir, "cache")))
+                shared_cache_dir = file.path(state_dir, "cache")))
   }
   
   # ── Data changed → auto-increment ──
@@ -322,12 +381,12 @@ init_run_manager <- function(input_file, config_list, root_output_dir) {
            module = module)
   dir.create(run_dir, recursive = TRUE, showWarnings = FALSE)
   .write_data_fingerprint(run_dir, current_fp)
-  .update_registry(root_output_dir, run_id, input_file, "NEW_DATA",
+  .update_registry(state_dir, config_list$framework_version, run_id, input_file, "NEW_DATA",
                    run_dir, current_fp)
   
   return(list(run_id = run_id, run_dir = run_dir, status = "NEW",
               data_changed = TRUE,
-              shared_cache_dir = file.path(root_output_dir, "cache")))
+              shared_cache_dir = file.path(state_dir, "cache")))
 }
 
 mark_run_complete <- function(run_dir) {
@@ -337,10 +396,15 @@ mark_run_complete <- function(run_dir) {
 run_env <- init_run_manager(
   input_file = CONFIG$input_file,
   config_list = CONFIG,
-  root_output_dir = CONFIG$root_output_dir
+  state_dir = state_dir_of(CONFIG)
 )
 
 SHARED_CACHE <- run_env$shared_cache_dir
+
+# Roll back the temporal history of a previous run that did not complete, then
+# checkpoint it for this one; the checkpoint is discarded only on success
+# (R/00_run_file.R). This is what makes a retry after a failure safe.
+temporal_checkpoint_open(state_dir_of(CONFIG), take = isTRUE(CONFIG$temporal$enabled))
 
 # Step 6: Load all module scripts
 cat("Loading analysis modules...\n")
@@ -890,12 +954,12 @@ if (run_env$status %in% c("NEW", "RESUME")) {
     } else NULL
     
     # ── Per-species comparison against saved baseline ──
-    art <- detect_prior_artifacts(sp_clean, CONFIG$root_output_dir)
+    art <- detect_prior_artifacts(sp_clean, state_dir_of(CONFIG))
     
     if (art$artifacts_exist) {
       # Load the previous snapshot for comparison
       prev <- tryCatch(
-        load_previous_version(sp_clean, art$latest_version, CONFIG$root_output_dir),
+        load_previous_version(sp_clean, art$latest_version, state_dir_of(CONFIG)),
         error = function(e) NULL
       )
       
@@ -924,7 +988,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
         occurrences_indigenous     = ind_occ,
         occurrences_non_indigenous = ni_occ,
         baseline_canonical_md      = baseline_md,
-        root_output_dir            = CONFIG$root_output_dir
+        root_output_dir            = state_dir_of(CONFIG)  # temporal/ lives in the state dir
       )
     }, error = function(e) {
       log_error("Temporal FAILED for %s: %s", sp, conditionMessage(e),
@@ -1134,7 +1198,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("  Packages:", ctx$current_version_dir, "\n")
   cat("  Manifest:", file.path(ctx$current_scaffolding_dir, "manifest.json"), "\n")  
   if (isTRUE(CONFIG$temporal$enabled)) {
-    cat("  Temporal:", file.path(CONFIG$root_output_dir, "temporal"), "\n")
+    cat("  Temporal:", temporal_root_dir(state_dir_of(CONFIG)), "\n")
   }
   cat("\n")
   cat("==============================================================\n")
@@ -1142,7 +1206,12 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("==============================================================\n")
   
   mark_run_complete(run_env$run_dir)
+  temporal_checkpoint_close(state_dir_of(CONFIG))
   log_info(">>> PIPELINE COMPLETE - ALL PHASES FINISHED <<<", module = "MAIN")
+  write_run_status(CONFIG, "succeeded",
+                   extra = list(revision_dir = normalizePath(ctx$current_version_dir,
+                                                             winslash = "/", mustWork = FALSE),
+                                code_version = ctx$code_version))
 }
 close_logger()
 cat("\nDone! Check the output directory for results.\n\n")

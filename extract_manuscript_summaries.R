@@ -4,13 +4,19 @@
 # Raw coordinates are never emitted — counts only.
 #
 # Usage:
-#   Rscript extract_manuscript_summaries.R [base_dir] [baseline_version] [current_version]
-#   e.g. Rscript extract_manuscript_summaries.R checkover_output 1.0 1.1
+#   Rscript extract_manuscript_summaries.R [base_dir] [baseline_version] [current_version] [state_dir] [clean_table]
+#   e.g. Rscript extract_manuscript_summaries.R checkover_output 1.0 1.1 checkover_state
 #
 # base_dir must contain <version>/ package folders, each with
-# package_metadata.json + narratives/, and <version>/checkover/clean_occurrences.tsv.
+# package_metadata.json + narratives/.
 #
-# Writes, next to base_dir:
+# The cleaned input table and the run logs are working state, not revision
+# content (the table carries coordinates), so they are read from state_dir: the
+# table of the run that <state_dir>/_registry.json records for baseline_version,
+# or clean_table when given. Revisions built before 2026-09 carried the table in
+# <version>/checkover/, and that location is still read when present.
+#
+# Writes to the CURRENT directory, never into base_dir (base_dir is mirrored):
 #   manuscript_summary.md    human-readable report (paste-able into email)
 #   manuscript_summary.json  machine-readable
 #   manuscript_summary.tsv   flat key/value table
@@ -21,8 +27,33 @@ args     <- commandArgs(trailingOnly = TRUE)
 base_dir <- if (length(args) >= 1) args[1] else "checkover_output"
 V_BASE   <- if (length(args) >= 2) args[2] else "1.0"
 V_CURR   <- if (length(args) >= 3) args[3] else "1.1"
+STATE    <- if (length(args) >= 4) args[4] else "checkover_state"
+CLEAN    <- if (length(args) >= 5) args[5] else NULL
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || all(is.na(x))) y else x
+
+# Where the cleaned input table of a revision lives: the explicit path, else the
+# run recorded for that revision in the state dir's registry, else the
+# pre-2026-09 location inside the revision.
+find_clean_table <- function(base_dir, ver, state_dir, explicit = NULL) {
+  if (!is.null(explicit) && nzchar(explicit)) return(explicit)
+  reg <- file.path(state_dir, "_registry.json")
+  if (file.exists(reg)) {
+    r <- tryCatch(jsonlite::read_json(reg, simplifyVector = FALSE), error = function(e) list())
+    for (e in rev(Filter(function(e) identical(e$framework_version, ver), r))) {
+      p <- file.path(e$path, "clean_occurrences.tsv")
+      if (file.exists(p)) return(p)
+    }
+  }
+  old <- file.path(base_dir, ver, "checkover", "clean_occurrences.tsv")
+  if (file.exists(old)) old else NULL
+}
+
+# Run logs live in the state dir since 2026-09; older layouts kept them in base_dir.
+log_files <- function() {
+  unlist(lapply(c(file.path(STATE, "logs"), file.path(base_dir, "logs")),
+                list.files, pattern = "\\.log$", full.names = TRUE))
+}
 .num   <- function(x) suppressWarnings(as.numeric(x))
 pct    <- function(a, b) if (isTRUE(b > 0)) round(100 * a / b, 2) else NA_real_
 
@@ -65,8 +96,10 @@ cat(sprintf("Reading %s / %s ...\n", V_BASE, V_CURR))
 base_meta <- load_version(V_BASE)
 curr_meta <- tryCatch(load_version(V_CURR), error = function(e) list())
 
-occ_path <- file.path(base_dir, V_BASE, "checkover", "clean_occurrences.tsv")
-occ <- if (file.exists(occ_path)) {
+occ_path <- find_clean_table(base_dir, V_BASE, STATE, CLEAN)
+if (is.null(occ_path)) cat(sprintf(
+  "  No cleaned input table found for %s; record-level figures will be NA.\n  Pass it as the 5th argument (it is in <state_dir>/runs/<run_id>/).\n", V_BASE))
+occ <- if (!is.null(occ_path) && file.exists(occ_path)) {
   read.delim(occ_path, sep = "\t", header = TRUE, stringsAsFactors = FALSE,
              quote = "", na.strings = c("", "NA"), colClasses = "character")
 } else NULL
@@ -79,7 +112,7 @@ occ <- if (file.exists(occ_path)) {
 # runs covering a handful of species). Always take the FULL-COHORT figures, i.e.
 # the maximum across logs — otherwise a later sparse run's numbers get reported.
 find_log_counts <- function() {
-  logs <- list.files(file.path(base_dir, "logs"), pattern = "\\.log$", full.names = TRUE)
+  logs <- log_files()
   raw <- mapped <- NA_integer_
   for (L in logs) {
     tx <- readLines(L, warn = FALSE)
@@ -188,7 +221,7 @@ cl_status <- vapply(base_meta, function(m)
 have_status <- any(!is.na(cl_status))
 cl_detected <- clusters[!is.na(clusters) & clusters > 1]
 frag_log <- local({
-  logs <- list.files(file.path(base_dir, "logs"), pattern = "\\.log$", full.names = TRUE)
+  logs <- log_files()
   g <- function(tx, pat) {
     h <- Filter(function(z) length(z) >= 2, regmatches(tx, regexec(pat, tx)))
     if (length(h)) suppressWarnings(as.integer(h[[1]][2])) else NA_integer_
@@ -455,7 +488,7 @@ if (!is.null(delta_all) && nrow(delta_all) > 0) {
 } else add("*No overlapping species between the two versions.*")
 add("")
 
-writeLines(L, file.path(base_dir, "manuscript_summary.md"), useBytes = TRUE)
+writeLines(L, "manuscript_summary.md", useBytes = TRUE)
 
 out <- list(
   generated = as.character(Sys.Date()), base_dir = base_dir,
@@ -477,7 +510,7 @@ out <- list(
                     max = if (length(cl_analysed)) max(cl_analysed) else NA),
   delta = delta_all
 )
-jsonlite::write_json(out, file.path(base_dir, "manuscript_summary.json"),
+jsonlite::write_json(out, "manuscript_summary.json",
                      pretty = TRUE, auto_unbox = TRUE, na = "null")
 
 flat <- rbind(
@@ -488,8 +521,8 @@ flat <- rbind(
   data.frame(section = "clustering", metric = c("species_analysed","multiple_clusters","single_cluster"),
              value = c(length(cl_analysed), n_multi, n_single))
 )
-write.table(flat, file.path(base_dir, "manuscript_summary.tsv"),
+write.table(flat, "manuscript_summary.tsv",
             sep = "\t", row.names = FALSE, quote = FALSE)
 
 cat(paste(L, collapse = "\n"), "\n")
-cat(sprintf("\nWrote: %s/manuscript_summary.{md,json,tsv}\n", base_dir))
+cat(sprintf("\nWrote: %s/manuscript_summary.{md,json,tsv}\n", getwd()))

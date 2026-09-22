@@ -45,8 +45,10 @@
 )
 
 # Regex Lucian's WoC platform uses to detect version folders. Anything that
-# doesn't match `^\d+\.\d+$` is treated as non-version scaffolding (e.g.
-# "checkover", "cache", "logs") and ignored by the consumer side.
+# doesn't match `^\d+\.\d+$` is ignored when listing prior versions. Since
+# 2026-09 the output root should hold nothing else anyway: runs/, cache/, logs/,
+# temporal/ and _registry.json live in CONFIG$state_dir, and the preflight
+# warns (refuses, for a service run) about anything else in the output root.
 .VERSION_FOLDER_REGEX <- "^[0-9]+\\.[0-9]+$"
 
 #' Which code produced this run.

@@ -110,6 +110,7 @@ report_geographic_integrity <- function(result, output_dir = "checkover_output")
       if (length(rj) > 0) {
         rejects <- data.frame(
           species  = sp[rj],
+          record_id = if ("record_id" %in% names(cd)) as.character(cd$record_id[rj]) else NA_character_,
           longitude = if ("longitude" %in% names(cd)) cd$longitude[rj] else NA,
           latitude  = if ("latitude"  %in% names(cd)) cd$latitude[rj]  else NA,
           snap_km  = if ("continent_snap_km" %in% names(cd)) round(cd$continent_snap_km[rj], 1) else NA,
@@ -118,10 +119,14 @@ report_geographic_integrity <- function(result, output_dir = "checkover_output")
         rejects <- rejects[order(-rejects$snap_km), , drop = FALSE]
         log_warn("%d record(s) had a nearest-land snap REJECTED (kept as '%s'):",
                  nrow(rejects), GEO_UNRESOLVED, module = module)
+        # Identified by record id, never by coordinates: the log is streamed off
+        # the server as run progress, and many of these records are
+        # confidential. The coordinates stay in geographic_integrity.json, which
+        # is written to the run's work directory and never uploaded.
         for (i in seq_len(min(nrow(rejects), 20L))) {
           r <- rejects[i, ]
-          log_warn("    %-34s (%.4f, %.4f) snap=%s km  reason=%s",
-                   r$species, as.numeric(r$longitude), as.numeric(r$latitude),
+          log_warn("    %-34s record %s  snap=%s km  reason=%s",
+                   r$species, ifelse(is.na(r$record_id), "?", r$record_id),
                    ifelse(is.na(r$snap_km), "n/a", format(r$snap_km)), r$reason,
                    module = module)
         }
