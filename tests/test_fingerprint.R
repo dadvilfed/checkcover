@@ -31,11 +31,21 @@ e1 <- data.frame(record_id = c("A","B","C"), longitude = c(22,23,24), latitude =
                  accuracy = "exact", stringsAsFactors = FALSE)
 e2 <- e1[c(3,2,1), ]
 
-pass <- identical(fp1, fp2) && !identical(fp1, fp3) &&
-        identical(compute_species_fingerprint(e1), compute_species_fingerprint(e2))
+# Occurrence origin is `status` without the WoRMS join and `status.x` with it.
+# Either way a native<->alien correction MUST change the fingerprint, and the
+# two spellings of the same data must fingerprint identically.
+s1 <- transform(e1, status = c("native", "native", "native"))
+s2 <- transform(e1, status = c("native", "alien",  "native"))
+s3 <- transform(e1, status.x = c("native", "native", "native"))
+origin_ok <- !identical(compute_species_fingerprint(s1), compute_species_fingerprint(s2)) &&
+             identical(compute_species_fingerprint(s1), compute_species_fingerprint(s3))
 
-cat(sprintf("[test_fingerprint] NA-id order-independent:%s  detects-change:%s  legacy-ok:%s -> %s\n",
+pass <- identical(fp1, fp2) && !identical(fp1, fp3) &&
+        identical(compute_species_fingerprint(e1), compute_species_fingerprint(e2)) &&
+        origin_ok
+
+cat(sprintf("[test_fingerprint] NA-id order-independent:%s  detects-change:%s  legacy-ok:%s  origin:%s -> %s\n",
             identical(fp1, fp2), !identical(fp1, fp3),
             identical(compute_species_fingerprint(e1), compute_species_fingerprint(e2)),
-            if (pass) "PASS" else "FAIL"))
+            origin_ok, if (pass) "PASS" else "FAIL"))
 quit(status = if (pass) 0 else 1)

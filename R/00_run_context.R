@@ -385,6 +385,16 @@ compute_species_fingerprint <- function(sp_data, columns = .FINGERPRINT_COLUMNS)
                   digest::digest("", algo = "sha256", serialize = FALSE)))
   }
 
+  # The occurrence origin (native/alien) is `status` straight out of ingest and
+  # becomes `status.x` only when the WoRMS taxonomy join adds its own `status`.
+  # Without that join (taxonomy$resolve = FALSE, e.g. the demo) the origin was
+  # silently left out of the fingerprint, so a native<->alien correction went
+  # unseen. Same column, one name.
+  if (!"status.x" %in% names(sp_data) && "status" %in% names(sp_data) &&
+      "status.x" %in% columns) {
+    sp_data$status.x <- sp_data$status
+  }
+
   # Subset to comparison columns that exist in this slice (preserves `columns` order)
   available_cols <- intersect(columns, names(sp_data))
   if (length(available_cols) == 0L) {
