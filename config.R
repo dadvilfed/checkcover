@@ -302,9 +302,14 @@ REQUIRED_PACKAGES <- c(
 #                Module 2D already works without it: CONFIG$spatial$feow_source
 #                accepts "local" (a shapefile you supply, the default) or
 #                "feowR" / "auto" to use this package instead.
+#
+# The repositories were named wrongly until 2026-09-23 (jeffreyhanson/ecoregions
+# and mhpob/feowR do not exist; the first container build failed on it).
+# ecoregions is pinned to the commit the production runs use, the same pin as
+# the Dockerfile; tests/test_github_packages.R keeps the two identical.
 GITHUB_PACKAGES <- c(
-  ecoregions = "jeffreyhanson/ecoregions",
-  feowR      = "mhpob/feowR"
+  ecoregions = "tomroh/ecoregions@4b9209885bcc7354bb987be3be1c33c1f48a7cab",
+  feowR      = "brunomioto/feowR"
 )
 
 # Which of the above a full run genuinely needs.

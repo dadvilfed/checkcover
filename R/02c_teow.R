@@ -23,7 +23,7 @@ load_teow <- function(cache_dir, module = "MODULE2C_TEOW") {
     stop("Module 2C needs the 'ecoregions' package for TEOW polygons. ",
          "It is not on CRAN; install it with:\n",
          "    install.packages(\"remotes\")\n",
-         "    remotes::install_github(\"jeffreyhanson/ecoregions\")",
+         "    ", github_install_hint("ecoregions"),
          call. = FALSE)
   }
 

@@ -257,6 +257,18 @@ normalize_species_name <- function(x) {
 #' five level-8 polygons has no name of its own.
 HB_TOPOLOGY_FIELDS <- c("MAIN_BAS", "NEXT_DOWN")
 
+#' The install command for a GitHub-only package, from GITHUB_PACKAGES in
+#' config.R: the one place the repository (and its pinned commit) is named.
+#' Messages used to carry their own copies of the repository name, and those
+#' went stale (jeffreyhanson/ecoregions, mhpob/feowR: neither exists).
+github_install_hint <- function(pkg) {
+  spec <- get0("GITHUB_PACKAGES", envir = globalenv(), ifnotfound = character(0))[pkg]
+  if (length(spec) != 1L || is.na(spec)) {
+    return(sprintf("see GITHUB_PACKAGES in config.R for the repository of '%s'", pkg))
+  }
+  sprintf("remotes::install_github(\"%s\")", unname(spec))
+}
+
 # ── How to cite cheCkOVER (CHECKOVER_REFERENCE in config.R) ──────────────────
 
 .reference_or_default <- function(ref) {

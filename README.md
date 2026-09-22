@@ -173,13 +173,15 @@ fetch these and will fail with "package is not available":
 
 ```r
 install.packages("remotes")
-remotes::install_github("jeffreyhanson/ecoregions")
+remotes::install_github("tomroh/ecoregions@4b9209885bcc7354bb987be3be1c33c1f48a7cab")
 ```
 
 `ecoregions` supplies the TEOW terrestrial-ecoregion polygons used by Module 2C.
-It is **required** — unlike FEOW, TEOW has no local-file alternative.
+It is **required** — unlike FEOW, TEOW has no local-file alternative. The pin is
+the commit the production runs use, and the Docker image installs the same one;
+both come from `GITHUB_PACKAGES` in `config.R`.
 
-Optionally, `remotes::install_github("mhpob/feowR")` provides an alternative
+Optionally, `remotes::install_github("brunomioto/feowR")` provides an alternative
 source for freshwater ecoregions; see `CONFIG$spatial$feow_source` below. The
 default (`"local"`) does not need it.
 
@@ -561,8 +563,8 @@ Run `preflight_check(CONFIG, strict = FALSE)` first — it catches most of these
 before anything is processed.
 
 **`package 'ecoregions' is not available`** — it is not on CRAN. Install it with
-`remotes::install_github("jeffreyhanson/ecoregions")`. It is required: TEOW has
-no local-file alternative.
+`remotes::install_github("tomroh/ecoregions@4b9209885bcc7354bb987be3be1c33c1f48a7cab")`.
+It is required: TEOW has no local-file alternative.
 
 **`Vernacular file path is invalid`** — `CONFIG$vernaculars$path` must name a
 file that exists. The shipped table is `(Table_S2)vernacular_names_wide.tsv`;
@@ -610,7 +612,7 @@ Rscript tests/run_all.R                              # unit + regression suite
 Rscript tests/audit_packages.R checkover_output/1.0  # per-package integrity
 ```
 
-**`tests/run_all.R`** — every `tests/test_*.R` (32 at present), covering the
+**`tests/run_all.R`** — every `tests/test_*.R` (33 at present), covering the
 classifier, extinction handling, the geographic fallback, vocabulary, Darwin
 Core mapping, fingerprinting, species scope, service mode, revision numbering,
 the citation, basin resolution, narrative consistency and the coordinate-free

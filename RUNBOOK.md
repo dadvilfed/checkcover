@@ -180,8 +180,9 @@ and 176 MB of temporal history for three revisions, with 260 GB free.
 ## 6. Rebuilding the image
 
 Rebuild only to deploy a **new** code tag. Tags are immutable: never rebuild an
-existing tag in place. The build installs `ecoregions` from GitHub at its latest
-commit, so rebuilding the same tag later can give a different image.
+existing tag in place. `ecoregions` is pinned to a commit, but the CRAN
+packages come from whatever the base image's package snapshot serves, so a
+rebuild months later can still differ. Keep the saved image (step 2).
 
 1. In a clean clone (`git status --porcelain` prints nothing):
    ```bash

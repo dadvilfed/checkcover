@@ -162,7 +162,9 @@ pk$note <- ifelse(
          "NOT REFERENCED ANYWHERE IN THE CODE - candidate for removal"))
 pk$reference_url <- ifelse(pk$source == "CRAN",
                            sprintf("https://cran.r-project.org/package=%s", pk$package),
-                           sprintf("https://github.com/%s", unname(gh)[match(pk$package, names(gh))]))
+                           # "owner/repo@sha" -> https://github.com/owner/repo/tree/sha
+                           sub("@([0-9a-f]{7,40})$", "/tree/\\1",
+                               sprintf("https://github.com/%s", unname(gh)[match(pk$package, names(gh))])))
 pk <- pk[order(pk$source != "CRAN", pk$package), ]
 rownames(pk) <- NULL
 

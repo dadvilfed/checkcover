@@ -56,8 +56,14 @@ RUN install2.r --error --skipinstalled --ncpus -1 \
 # ecoregions supplies the TEOW terrestrial-ecoregion polygons (Module 2C) and is
 # not on CRAN, so install2.r cannot fetch it. There is no local-file alternative
 # for TEOW, unlike FEOW, so a full run needs it.
+#
+# Pinned to the commit the production runs on the UVT server use, so the image
+# carries the same ecoregion data and a rebuild of a tag gets the same package.
+# Keep it identical to GITHUB_PACKAGES in config.R (tests/test_github_packages.R
+# checks). The repository is tomroh/ecoregions; the jeffreyhanson/ecoregions
+# named here before 2026-09-23 does not exist, and the first build failed on it.
 RUN R -e 'install.packages("remotes", repos = "https://cloud.r-project.org"); \
-          remotes::install_github("jeffreyhanson/ecoregions", upgrade = "never")'
+          remotes::install_github("tomroh/ecoregions@4b9209885bcc7354bb987be3be1c33c1f48a7cab", upgrade = "never")'
 
 WORKDIR /work
 

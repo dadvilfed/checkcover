@@ -76,14 +76,16 @@ preflight_check <- function(config = NULL, strict = TRUE, module = "PREFLIGHT") 
               "Or set CONFIG$spatial$feow_source to 'feowR' to use the package instead.")
   } else if (feow_source == "feowR" && !requireNamespace("feowR", quietly = TRUE)) {
     add("FATAL", "feowR package",
-        "CONFIG$spatial$feow_source is 'feowR' but the package is absent. Install with remotes::install_github(\"mhpob/feowR\"), or set feow_source to 'local'.")
+        sprintf("CONFIG$spatial$feow_source is 'feowR' but the package is absent. Install with %s, or set feow_source to 'local'.",
+                github_install_hint("feowR")))
   }
 
   # ── 4. Non-CRAN packages ──────────────────────────────────────────────────
   # TEOW has no local-file alternative, so `ecoregions` is genuinely required.
   if (!requireNamespace("ecoregions", quietly = TRUE)) {
     add("FATAL", "ecoregions package",
-        "Required for TEOW terrestrial ecoregions (Module 2C) and not on CRAN. Install with remotes::install_github(\"jeffreyhanson/ecoregions\").")
+        sprintf("Required for TEOW terrestrial ecoregions (Module 2C) and not on CRAN. Install with %s.",
+                github_install_hint("ecoregions")))
   }
 
   # ── 5. Output directory ───────────────────────────────────────────────────

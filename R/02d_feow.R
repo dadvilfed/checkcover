@@ -34,7 +34,7 @@ load_feow_min <- function(cache_dir, feow_source = "auto", feow_shp_path = NULL,
       }
     } else {
       log_error("feowR package not available.", module = module)
-      stop("feowR package not available. Install with: remotes::install_github('brunomioto/feowR')")
+      stop("feowR package not available. Install with: ", github_install_hint("feowR"))
     }
     
   } else if (feow_source == "local") {
