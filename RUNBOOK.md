@@ -54,7 +54,10 @@ holds the access token to WoC. `ubuntu` stays for administration. All of step
    sudo chmod -R a+rX /data/spatial                                 # readable, owned by root: read-only for the runner
    ```
    The service needs no inbound port, so nothing else should listen: close the
-   print service with `sudo systemctl disable --now cups.socket cups.service cups-browsed.service`.
+   print service. On the UVT server CUPS is a snap, closed with
+   `sudo snap stop --disable cups` (2026-09-22); where it is a system package,
+   use `sudo systemctl disable --now cups.socket cups.service cups-browsed.service`.
+   Check that `sudo ss -ltnp | grep ':631'` prints nothing.
 2. Work as `checkover`: `sudo -iu checkover`, then
    `export XDG_RUNTIME_DIR=/run/user/$(id -u)`. Rootless Podman needs this
    variable, and `sudo` does not set it.
