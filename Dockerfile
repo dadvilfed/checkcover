@@ -30,7 +30,9 @@
 # Occurrence data and reference layers are deliberately NOT baked into the
 # image — they are mounted at run time. See README "Data availability".
 
-FROM rocker/geospatial:4.5.2
+# Fully qualified: Podman does not assume Docker Hub for a short name, and a
+# build without a terminal cannot ask which registry to use.
+FROM docker.io/rocker/geospatial:4.5.2
 
 ARG CODE_VERSION=unknown
 ENV CHECKOVER_CODE_VERSION=${CODE_VERSION}
