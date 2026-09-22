@@ -31,6 +31,8 @@ Rscript tests/test_unit.R
 | `test_extinct_path.R` | Zero-active terminal narrative: extirpation statement, AOO=0/EOO=NA, mandatory data-state disclaimer, no basins layer; passes both audits | base R only |
 | `test_coordinate_free.R` | A revision folder carries no coordinates: the audit's coordinate scan flags binaries, coordinate columns/keys, lat/lon pairs and map points, and does not flag DOIs or range polygons; `records_used.tsv` has exactly `record_id, species, state` | `jsonlite` |
 | `test_run_file.R` | Service mode: the `CHECKOVER_RUN` run file overrides `config.R` and a bad one is refused with every problem in `preflight.json`; exit codes 0/1/2 and `status.json` from real child R processes; output root holds revisions only, a state dir belongs to one output root; the temporal history rolls back after a run that did not complete | `jsonlite` |
+| `test_version_order.R` | Revisions compare by numeric component: builds 1.2 → 1.9 → 1.10 → 1.11 → 1.100 with real change detection; 1.100 is latest, each revision's predecessor and every taxon's source are right; the preflight refuses a number that is not after the latest | `digest`, `jsonlite`, `readr` |
+| `test_citation.R` | The cheCkOVER reference is exactly the agreed text (code points included), rebuilt from its fields, and carried as preferred-citation in the CFF Module 7 writes, in package_metadata.json and in the READMEs | `dplyr`, `jsonlite`, `glue` |
 | `test_species_scope.R` | `species_scope`: approved taxa reprocessed, others `deferred`/`deferred_new`; across two runs a deferred change is still seen (source fingerprint kept) | `digest`, `jsonlite`, `readr` |
 
 ## Notes

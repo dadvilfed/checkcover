@@ -107,6 +107,37 @@ aud <- paste(readLines("tests/audit_packages.R", warn = FALSE), collapse = "\n")
 ok(grepl('file.path(version_dir, "checkover")', aud, fixed = TRUE),
    "the audit report is written into <rev>/checkover/")
 
+# ---- the verdict, end to end through the real CLI ----
+# `passed` is what a platform checks before installing (SERVICE_CONTRACT.md).
+# It must agree with the exit code and with the three per-check verdicts, and a
+# coordinate leak must turn it false.
+rscript <- file.path(R.home("bin"), if (.Platform$OS.type == "windows") "Rscript.exe" else "Rscript")
+run_audit <- function() {
+  code <- suppressWarnings(system2(rscript, c("--vanilla", "tests/audit_packages.R", shQuote(rev)),
+                                   stdout = FALSE, stderr = FALSE))
+  list(code = as.integer(code),
+       rep  = jsonlite::read_json(file.path(rev, "checkover", "_audit_report.json"),
+                                  simplifyVector = TRUE))
+}
+agree <- function(a) {
+  checks <- c(a$rep$checks$integrity$passed, a$rep$checks$consistency$passed,
+              a$rep$checks$coordinate_free$passed)
+  is.logical(a$rep$passed) && identical(a$rep$passed, all(checks)) &&
+    identical(a$code, if (isTRUE(a$rep$passed)) 0L else 1L) &&
+    identical(a$rep$result, if (isTRUE(a$rep$passed)) "PASS" else "FAIL")
+}
+a1 <- run_audit()
+ok(agree(a1) && isTRUE(a1$rep$checks$coordinate_free$passed),
+   "report: passed / result / exit code agree; the coordinate check passes a clean revision")
+invisible(w("checkover/clean_occurrences.tsv", c("record_id\tlongitude\tlatitude", "W1\t22.123456\t46.123456")))
+a2 <- run_audit()
+ok(agree(a2) && identical(a2$rep$passed, FALSE) && identical(a2$code, 1L) &&
+   identical(a2$rep$checks$coordinate_free$passed, FALSE),
+   "report: a coordinate leak sets passed = false and exits 1 (the runner must not upload)")
+ok(!grepl("22.123456", paste(readLines(file.path(rev, "checkover", "_audit_report.json")), collapse = "")),
+   "report: names the leaking file, never the coordinates it found")
+unlink(file.path(rev, "checkover/clean_occurrences.tsv"))
+
 unlink(rev, recursive = TRUE)
 cat(sprintf("\n[test_coordinate_free] %d passed, %d failed\n", pass, fail))
 quit(status = if (fail > 0) 1 else 0)

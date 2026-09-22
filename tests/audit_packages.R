@@ -399,7 +399,25 @@ if (sys.nframe() == 0L && !interactive()) {
 
   # The report lives in <rev>/checkover/, beside the manifest: it is part of
   # the sidecar the platform validates before installing a revision.
+  #
+  # `passed` is THE verdict (SERVICE_CONTRACT.md): true only when all three
+  # checks found nothing. The exit code says the same (0 pass, 1 fail). The
+  # revision and code version come from the manifest, so a consumer can check
+  # the report belongs to the folder it is about to install.
+  failed <- integ$n_flagged > 0 || cons$n_mismatched > 0 || coords$n_flagged > 0
+  man <- tryCatch(jsonlite::read_json(file.path(version_dir, "checkover", "manifest.json")),
+                  error = function(e) list())
   report <- list(
+    passed            = !failed,
+    result            = if (failed) "FAIL" else "PASS",
+    framework_version = man$framework_version %||% basename(normalizePath(version_dir, mustWork = FALSE)),
+    code_version      = man$code_version %||% NA_character_,
+    audited_at        = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
+    checks = list(
+      integrity       = list(passed = integ$n_flagged == 0,  n_checked = integ$n_checked,  n_flagged = integ$n_flagged),
+      consistency     = list(passed = cons$n_mismatched == 0, n_checked = cons$n_checked,  n_flagged = cons$n_mismatched),
+      coordinate_free = list(passed = coords$n_flagged == 0, n_checked = coords$n_checked, n_flagged = coords$n_flagged)
+    ),
     version_dir     = version_dir,
     generated       = as.character(Sys.time()),
     integrity       = integ,
@@ -412,7 +430,6 @@ if (sys.nframe() == 0L && !interactive()) {
   jsonlite::write_json(report, out, pretty = TRUE, auto_unbox = TRUE, na = "null")
   cat(sprintf("\nReport written to %s\n", out))
 
-  failed <- integ$n_flagged > 0 || cons$n_mismatched > 0 || coords$n_flagged > 0
-  cat(sprintf("\nRESULT: %s\n\n", if (failed) "FAIL" else "PASS"))
+  cat(sprintf("\nRESULT: %s\n\n", report$result))
   quit(status = if (failed) 1 else 0)
 }

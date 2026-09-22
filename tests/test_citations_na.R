@@ -26,6 +26,7 @@ for (p in c("jsonlite", "dplyr")) {
   }
 }
 suppressWarnings(suppressMessages({
+  source("config.R")   # CHECKOVER_REFERENCE, for the CITATION.cff Module 7 writes
   source("R/00_logging.R"); source("R/00_helpers.R"); source("R/07_citations.R")
 }))
 

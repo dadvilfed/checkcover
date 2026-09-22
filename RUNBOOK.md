@@ -2,8 +2,10 @@
 
 What to do, step by step, when cheCkOVER runs as a service on the UVT server for
 World of Crayfish (WoC). The runner follows it literally; an administrator reads
-it when a run shows "failed". The *why* behind each rule is in the README,
-sections [Where things live](README.md#where-things-live) and
+it when a run shows "failed". The interface itself (run file, input table,
+exit codes, file schemas) is specified in
+[SERVICE_CONTRACT.md](SERVICE_CONTRACT.md). The *why* behind each rule is in the
+README, sections [Where things live](README.md#where-things-live) and
 [Running as a service](README.md#running-as-a-service).
 
 ---
@@ -36,25 +38,28 @@ merged HydroBASINS levels, TEOW, FEOW, Natural Earth.
 
 ## 2. One-time setup
 
-1. Container runtime: neither Docker nor Podman is installed (server facts,
-   2026-09-22). Rootless Podman fits: the `ubuntu` account already has a subuid
-   range, and container files then belong to `ubuntu` on the host.
+The runner lives in its own account, **`checkover`, without sudo**, because it
+holds the access token to WoC. `ubuntu` stays for administration. All of step
+1 is done as `ubuntu`; everything after it as `checkover`.
+
+1. As `ubuntu`, once:
    ```bash
-   sudo apt install podman
+   sudo apt install podman                                          # rootless containers
+   sudo adduser --disabled-password --gecos "cheCkOVER runner" checkover
+   grep checkover /etc/subuid /etc/subgid                           # rootless Podman needs both lines
+   sudo loginctl enable-linger checkover                            # its services survive reboots
+   sudo mkdir -p /data/spatial /data/output /data/state /data/runs /data/trial
+   sudo chown checkover:checkover /data/output /data/state /data/runs /data/trial
+   sudo cp -r <reference layers>/. /data/spatial/                   # hydrobasins/, feow/
+   sudo chmod -R a+rX /data/spatial                                 # readable, owned by root: read-only for the runner
    ```
-2. Let the runner's user service survive a reboot without anyone logging in
-   (linger is currently off):
-   ```bash
-   sudo loginctl enable-linger ubuntu
-   ```
-3. Create the volumes:
-   ```bash
-   sudo mkdir -p /data/spatial /data/output /data/state /data/runs
-   sudo chown -R ubuntu:ubuntu /data
-   ```
-4. Copy the reference layers into `/data/spatial/`, keeping the repository's
-   layout (`hydrobasins/`, `feow/`).
-5. Build the image (section 6).
+   The service needs no inbound port, so nothing else should listen: close the
+   print service with `sudo systemctl disable --now cups.socket cups.service cups-browsed.service`.
+2. Work as `checkover`: `sudo -iu checkover`, then
+   `export XDG_RUNTIME_DIR=/run/user/$(id -u)`. Rootless Podman needs this
+   variable, and `sudo` does not set it.
+3. Build the image as `checkover` (section 6). Rootless images belong to the
+   account that built them.
 
 ---
 
@@ -75,8 +80,9 @@ For run `<run_id>`, revision `<rev>` and image tag `<tag>`:
      "code_tag": "<tag>" }
    ```
    `framework_version` is a string. Leave out `species_scope`, or set it to
-   `null`, for a full run. Taxa may be given as names (`"Astacus astacus"`) or
-   package ids (`"Astacus_astacus"`).
+   `null`, for a full run. Taxa are listed by **package id**
+   (`"Astacus_astacus"`), exactly as the manifest keys them. A display name
+   is refused (SERVICE_CONTRACT section 1).
 3. **Run**, and tail `run.log` for progress:
    ```bash
    podman run --rm --name checkover_<run_id> \
@@ -101,17 +107,18 @@ For run `<run_id>`, revision `<rev>` and image tag `<tag>`:
    |---|---|---|---|
    | `0` | `succeeded` | completed, pending audit | step 5 |
    | `1` | `failed` | failed | section 4 |
-   | `2` | `refused` | refused | show `preflight.json` on the workbench. Nothing was processed, so there is nothing to clean up. Fix the cause and run again. |
+   | `2` | `refused` | refused | show `preflight.json` on the workbench. Nothing was written to the output root. A refusal after the input was read (taxa the input does not contain) leaves working files in `work/`; delete them. Fix the cause and run again. |
 
 5. **Audit** the revision; this writes `/data/output/<rev>/checkover/_audit_report.json`:
    ```bash
    podman run --rm -v /data/output:/data/output checkover:<tag> \
      Rscript tests/audit_packages.R /data/output/<rev>
    ```
-   Exit `0`: upload the revision folder. Anything else: do not upload. Copy
-   the report to `/data/runs/<run_id>/`, mark the run failed with it, then
-   delete `/data/output/<rev>/`. The report names files and reasons, never
-   coordinates, so it is safe to show.
+   Upload only if the audit exited `0` **and** the report says
+   `"passed": true` with the run's `framework_version`. Anything else: do not
+   upload. Copy the report to `/data/runs/<run_id>/`, mark the run failed with
+   it, then delete `/data/output/<rev>/`. The report names files and reasons,
+   never coordinates, so it is safe to show.
 6. **Upload** `/data/output/<rev>/` in parts.
 7. **Afterwards.** WoC installs the revision, so it stays in the mirror. If WoC
    discards it, delete `/data/output/<rev>/`. Once uploaded, `work/` is only
@@ -185,8 +192,8 @@ commit, so rebuilding the same tag later can give a different image.
    podman save -o checkover_<tag>.tar checkover:<tag>
    ```
 3. Before the first real run with a new tag, run the demo
-   (`demo_data/WoC_demo_Pontastacus.tsv`) into a throwaway output and state
-   dir, and compare it with the previous tag's demo output.
+   (`demo_data/WoC_demo_Pontastacus.tsv`) as a trial (section 9) and compare it
+   with the previous tag's demo output using `tools/compare_revisions.R`.
 4. **A code change is invisible to change detection.** Fingerprints cover the
    data, not the code, so every taxon whose data did not change keeps its old
    package. If the new tag changes what cheCkOVER computes, the first run with
@@ -231,3 +238,28 @@ computed them changed.
 The preflight refuses a state dir whose `temporal/` has history but whose output
 root has no revisions, so the old history cannot leak into the new series by
 accident.
+
+---
+
+## 9. Trial runs on the server
+
+Before the runner exists, and after every new image, test with the stand-in
+runner. It builds everything under `/data/trial/<name>/`, never touches the real
+volumes, and uploads nothing:
+
+```bash
+tools/service_trial.sh container demo_c demo_data/WoC_demo_Pontastacus.tsv
+tools/service_trial.sh host      demo_h demo_data/WoC_demo_Pontastacus.tsv
+Rscript tools/compare_revisions.R /data/trial/demo_h/output/1.0 /data/trial/demo_c/output/1.0 diff.md
+```
+
+It prints the exit code, the audit verdict, the elapsed time, the peak memory
+and the time per phase. It also copies `preflight.json`, `status.json`,
+`manifest.json`, `records_used.tsv`, `_audit_report.json` and one
+`package_metadata.json` into `samples/`, unedited. To time runs of N taxa of
+mixed sizes:
+
+```bash
+Rscript tools/pick_taxa.R /path/to/full_input.tsv 10 ids10.txt
+tools/service_trial.sh container q9_10 /path/to/full_input.tsv @ids10.txt
+```

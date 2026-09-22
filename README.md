@@ -398,6 +398,13 @@ whole configuration, exactly as for a manual run.
 - An unknown key is refused, not ignored, so a typo cannot silently become a
   `config.R` default.
 - `run_id` defaults to the name of the folder holding the run file.
+- `species_scope` and `force_reprocess` list taxa by **package id**
+  (`Astacus_astacus`), the manifest's keys. A display name, or an id that
+  matches no taxon in the input, is refused with every such entry listed.
+
+The full interface — run file, input table, what counts as a change, exit
+codes, and the schemas of every file a platform reads — is specified in
+[SERVICE_CONTRACT.md](SERVICE_CONTRACT.md).
 
 That folder is the **run home**, and everything the run writes outside the
 revision goes there:
@@ -451,14 +458,20 @@ This makes an incremental version cheap: the v1.0 → v1.1 run in the reference
 dataset reprocessed 16 of 676 species. `<version>/checkover/manifest.json` is
 the consumer-facing record of what lives where.
 
-**The change rule is exact.** A taxon's fingerprint covers 15 columns of every
+**The change rule is exact.** A taxon's fingerprint covers 23 columns of every
 one of its records: `record_id`, `longitude`, `latitude`, `year`, `is_extinct`,
 `is_type_locality`, `population_status`, `status.x`, `accuracy`, `doi`, `url`,
-`citation`, `contributor`, `confidentiality_level`, `is_sensitive`. Any
-difference in any of them — one record added, removed or edited — marks the
-taxon changed. There is no minimum size of change. (The ±5 % that appears in
-narratives is the threshold of the AOO *trend label*, and has nothing to do
-with change detection.)
+`citation`, `contributor`, `confidentiality_level`, `is_sensitive`,
+`occurrence_origin`, `country`, `continents`, `admin_1`,
+`extinction_remarks`, `citation_all`, `doi_all` and `url_all`. Any difference
+in any of them — one record added, removed or edited — marks the taxon
+changed. There is no minimum size of change. (The ±5 % that appears in narratives is the threshold of the AOO
+*trend label*, and has nothing to do with change detection.)
+
+The last eight joined for the clean 1.0: each reaches the packages, so editing
+it in the source used to leave a stale package marked `unchanged`. Which input
+columns feed which fingerprint column, and how values are normalised, is in
+[SERVICE_CONTRACT.md](SERVICE_CONTRACT.md#3-what-counts-as-a-change).
 
 ### Outcomes
 
@@ -597,10 +610,11 @@ Rscript tests/run_all.R                              # unit + regression suite
 Rscript tests/audit_packages.R checkover_output/1.0  # per-package integrity
 ```
 
-**`tests/run_all.R`** — every `tests/test_*.R` (30 at present), covering the
+**`tests/run_all.R`** — every `tests/test_*.R` (32 at present), covering the
 classifier, extinction handling, the geographic fallback, vocabulary, Darwin
-Core mapping, fingerprinting, species scope, service mode, basin resolution, narrative
-consistency and the coordinate-free rule. Each runs in its own process.
+Core mapping, fingerprinting, species scope, service mode, revision numbering,
+the citation, basin resolution, narrative consistency and the coordinate-free
+rule. Each runs in its own process.
 
 **`tests/audit_packages.R`** — for every species package, asserts the expected
 artifacts exist and are non-empty, and that every headline number in the
@@ -760,18 +774,16 @@ fields from every published package. Request data through
 
 ## Citation
 
-If you use cheCkOVER, please cite the software and the underlying data:
+If you use cheCkOVER, please cite it as:
 
-```bibtex
-@software{checkover,
-  title  = {cheCkOVER: a reproducible framework for versioned biodiversity
-            occurrence packages},
-  author = {Pârvulescu, Lucian and collaborators},
-  year   = {2026},
-  url    = {https://github.com/<owner>/<repo>},
-  note   = {Version 1.0}
-}
-```
+> Livadariu D, Bâcu VI, Nandra CI, Ștefănuț TT, Sabou A, WoC® Contributors,
+> Crandall KA, Pârvulescu L: cheCkOVER: Assessment-support workflow for
+> biogeographic metrics from species occurrence data.
+> <https://doi.org/10.64898/2025.12.29.696807>
+
+Every species package carries the same reference, as `preferred-citation` in
+its `CITATION.cff` and as `preferred_citation` in `package_metadata.json`. It is
+defined once, as `CHECKOVER_REFERENCE` in `config.R`.
 
 **Underlying data** — Ion, M. C. et al. (2024). World of Crayfish™: a web
 platform towards real-time global mapping of freshwater crayfish and their

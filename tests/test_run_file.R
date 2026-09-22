@@ -21,7 +21,7 @@ if (!requireNamespace("jsonlite", quietly = TRUE)) {
   cat("[test_run_file] SKIP (jsonlite not installed)\n"); quit(status = 0)
 }
 suppressWarnings(suppressMessages({
-  source("R/00_run_file.R"); source("R/00_preflight.R")
+  source("R/00_helpers.R"); source("R/00_run_file.R"); source("R/00_preflight.R")
 }))
 
 pass <- 0L; fail <- 0L
@@ -58,14 +58,14 @@ ok(is.null(cfg0$service) && identical(cfg0[names(base)], base[names(base)]),
 f1 <- put("run_a1", '{
   "run_id": "run_a1", "framework_version": "1.3",
   "input_file": "/data/runs/run_a1/input.tsv", "root_output_dir": "/data/output",
-  "state_dir": "/data/state", "species_scope": ["Astacus_astacus", "Faxonius validus"],
+  "state_dir": "/data/state", "species_scope": ["Astacus_astacus", "Faxonius_validus"],
   "force_reprocess": [], "code_tag": "runtime-1.3",
   "spatial": {"hydro_dir": "/data/spatial/hydrobasins"} }')
 cfg1 <- apply_run_file(base, path = f1)
 ok(identical(cfg1$framework_version, "1.3") && identical(cfg1$root_output_dir, "/data/output") &&
    identical(cfg1$state_dir, "/data/state") && identical(cfg1$code_tag, "runtime-1.3"),
    "run file values override config.R")
-ok(identical(cfg1$species_scope, c("Astacus_astacus", "Faxonius validus")),
+ok(identical(cfg1$species_scope, c("Astacus_astacus", "Faxonius_validus")),
    "species_scope arrives as a character vector")
 ok(identical(cfg1$force_reprocess, FALSE), "an empty force_reprocess list means FALSE")
 ok(identical(cfg1$spatial$hydro_dir, "/data/spatial/hydrobasins") && identical(cfg1$spatial$hydro_bbox, 50),
@@ -111,6 +111,32 @@ ok(refused(apply_run_file(base, path = f5))$flagged, "framework_version must be 
 ok(refused(apply_run_file(base, path = file.path(home("run_none"), "run.json")))$flagged &&
    file.exists(file.path(home("run_none"), "preflight.json")),
    "a missing run file is refused, and the refusal is still written to the run home")
+
+# ---- taxon lists hold package ids, and nothing else (Lucian 7a) ----
+f6 <- put("run_forms", '{"framework_version": "1.3", "input_file": "x.tsv",
+  "root_output_dir": "o", "state_dir": "s",
+  "species_scope": ["Astacus_astacus", "Astacus astacus", "Cambarellus (Pandicambarus) rotatus", "_x_"],
+  "force_reprocess": ["Faxonius limosus"]}')
+r6  <- refused(apply_run_file(base, path = f6))
+pf6 <- read_json(file.path(dirname(f6), "preflight.json"))
+ok(r6$flagged && identical(pf6$status, "refused"),
+   "a display name in a taxon list is refused (exit 2), never translated")
+ok(sum(pf6$problems$item == "species_scope") == 3L &&
+   all(c("Astacus astacus", "Cambarellus (Pandicambarus) rotatus", "_x_") %in%
+       regmatches(pf6$problems$detail, regexpr('(?<=")[^"]+(?=")', pf6$problems$detail, perl = TRUE))) &&
+   any(pf6$problems$item == "force_reprocess" & grepl("Faxonius limosus", pf6$problems$detail)),
+   "every refused entry is listed in preflight.json, one row each; the valid id is not")
+
+svc7 <- modifyList(base, list(species_scope = c("Astacus_astacus", "Bstacus_b", "all"),
+                              force_reprocess = c("Cambarellus_pandicambarus_rotatus")))
+svc7$service <- service_paths(file.path(home("run_taxa"), "run.json"))
+in_input <- c("Astacus astacus", "Cambarellus (pandicambarus) rotatus", "Faxonius limosus")
+t7 <- check_run_taxa(svc7, in_input)
+ok(nrow(t7) == 2L && all(t7$item == "species_scope") &&
+   any(grepl('"Bstacus_b"', t7$detail)) && any(grepl('"all"', t7$detail)),
+   "after ingest: ids matching no taxon in the input are refused, including \"all\"")
+ok(nrow(check_run_taxa(base, in_input)) == 0L,
+   "a manual run (no run file) keeps config.R's flexible names: nothing checked here")
 
 # ---- the preflight writes its full list for a service run ----
 svc_cfg <- modifyList(base, list(input_file = file.path(tmp, "absent.tsv"),
@@ -240,7 +266,8 @@ run_child <- function(id, body) {
                                    stdout = FALSE, stderr = FALSE))
   list(code = code, status = read_json(file.path(h, "status.json")))
 }
-c0 <- run_child("exit_ok", 'write_run_status(CONFIG, "succeeded")')
+c0 <- run_child("exit_ok", c('mark_phase("ingest")', 'Sys.sleep(0.3)', 'mark_phase("export")',
+                             'write_run_status(CONFIG, "succeeded")'))
 c1 <- run_child("exit_fail", 'stop("boom in module 5")')
 c2 <- run_child("exit_refuse", 'refuse_run(data.frame(severity = "FATAL", item = "x", detail = "y"), "nope", CONFIG)')
 ok(identical(as.integer(c0$code), 0L) && identical(c0$status$status, "succeeded"),
@@ -250,6 +277,14 @@ ok(identical(as.integer(c1$code), 1L) && identical(c1$status$status, "failed") &
    "an error during the run exits 1; status.json says failed, with the error message")
 ok(identical(as.integer(c2$code), 2L) && identical(c2$status$status, "refused"),
    "a refusal exits 2; status.json says refused")
+ph <- c0$status$phases
+ok(identical(ph$phase, c("ingest", "export")) && ph$seconds[1] >= 0.2 &&
+   is.numeric(c0$status$elapsed_seconds) && c0$status$elapsed_seconds >= ph$seconds[1] &&
+   is.character(c0$status$started_at),
+   "status.json times the run: elapsed seconds and seconds per phase")
+ok(if (file.exists("/proc/self/status")) is.numeric(c0$status$peak_rss_mb) && c0$status$peak_rss_mb > 0
+   else is.null(c0$status$peak_rss_mb),
+   "status.json records peak memory (Linux; absent where /proc does not exist)")
 
 unlink(tmp, recursive = TRUE)
 cat(sprintf("\n[test_run_file] %d passed, %d failed\n", pass, fail))

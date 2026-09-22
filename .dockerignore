@@ -14,3 +14,5 @@ checkover_handover_*/
 .git/
 *.rar
 *.zip
+checkover_state/
+server_facts_*.txt

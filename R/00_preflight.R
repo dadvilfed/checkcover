@@ -109,6 +109,10 @@ preflight_check <- function(config = NULL, strict = TRUE, module = "PREFLIGHT") 
   lay <- check_state_layout(config)
   for (i in seq_len(nrow(lay))) add(lay$severity[i], lay$item[i], lay$detail[i])
 
+  # ── 5c. The revision number ───────────────────────────────────────────────
+  num <- check_version_number(config)
+  for (i in seq_len(nrow(num))) add(num$severity[i], num$item[i], num$detail[i])
+
   # ── 6. Input columns ──────────────────────────────────────────────────────
   # Read the header only: the file can be hundreds of MB.
   if (!is.null(config$input_file) && file.exists(config$input_file)) {
@@ -292,5 +296,66 @@ check_state_layout <- function(config) {
     if (!okw) add("FATAL", "state_dir", sprintf("'%s' is not writable.", state))
   }
 
+  done()
+}
+
+#' The revision number: a MAJOR.MINOR string, after every existing revision.
+#'
+#' Versions compare by numeric component, so 1.10 follows 1.9 and 1.100 follows
+#' 1.99 (Lucian, 2026-09: the series counts 1.9, 1.10, ... 1.100 without limit).
+#' A revision inherits from the revisions before it, so a number that is not
+#' after the latest one would inherit from the wrong predecessor: FATAL. A
+#' skipped number (1.9 -> 1.11) is a WARNING: the series has no gaps by rule,
+#' but nothing breaks.
+#'
+#' @return A data frame of findings (severity, item, detail), possibly empty.
+check_version_number <- function(config) {
+  f <- list()
+  add <- function(severity, item, detail) {
+    f[[length(f) + 1L]] <<- data.frame(severity = severity, item = item,
+                                       detail = detail, stringsAsFactors = FALSE)
+  }
+  done <- function() {
+    if (length(f)) do.call(rbind, f) else
+      data.frame(severity = character(), item = character(), detail = character(),
+                 stringsAsFactors = FALSE)
+  }
+  rx <- "^[0-9]+\\.[0-9]+$"
+  fv <- config$framework_version
+  if (!is.character(fv) || length(fv) != 1L || is.na(fv) || !grepl(rx, fv)) {
+    add("FATAL", "framework_version", sprintf(paste0(
+      "must be a string of the form MAJOR.MINOR such as \"1.10\" (got %s). ",
+      "Written as a number, 1.10 would be read as 1.1."),
+      paste(format(fv), collapse = ", ")))
+    return(done())
+  }
+
+  parts <- function(v) as.numeric(strsplit(v, ".", fixed = TRUE)[[1]])
+  after <- function(a, b) {        # is version a after version b?
+    pa <- parts(a); pb <- parts(b)
+    pa[1] > pb[1] || (pa[1] == pb[1] && pa[2] > pb[2])
+  }
+
+  out <- config$root_output_dir
+  if (is.null(out) || !dir.exists(out)) return(done())
+  revs <- list.dirs(out, recursive = FALSE, full.names = FALSE)
+  revs <- setdiff(revs[grepl(rx, revs)], fv)
+  if (!length(revs)) return(done())
+  latest <- revs[1]
+  for (r in revs[-1]) if (after(r, latest)) latest <- r
+
+  if (!after(fv, latest)) {
+    add("FATAL", "framework_version", sprintf(paste0(
+      "%s is not after the latest revision %s in '%s'. Revisions compare by ",
+      "numeric component (1.10 follows 1.9), and a revision inherits from the ",
+      "ones before it, so the new number must be the next one after %s."),
+      fv, latest, out, latest))
+  } else {
+    p <- parts(fv); l <- parts(latest)
+    skipped <- (p[1] == l[1] && p[2] > l[2] + 1) || (p[1] > l[1] && p[2] != 0)
+    if (skipped) add("WARNING", "framework_version", sprintf(
+      "%s skips numbers after the latest revision %s; the series normally has no gaps.",
+      fv, latest))
+  }
   done()
 }

@@ -29,6 +29,7 @@ source("config.R")
 # the service exit codes: 0 succeeded, 1 failed, 2 refused before processing.
 source("R/00_run_file.R")
 install_exit_handler()
+mark_phase("startup")   # packages, preflight, run manager; status.json times every phase
 CONFIG <- apply_run_file(CONFIG)
 if (!is.null(CONFIG$service)) {
   cat(sprintf("Service run '%s' from %s\n", CONFIG$service$run_id, CONFIG$service$run_file))
@@ -499,6 +500,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   # ============================================================
   
   # Module 1: Ingest & Clean
+  mark_phase("ingest")
   cat("\n[MODULE 1] Ingesting and cleaning data...\n")
   result <- ingest_clean(
     CONFIG$input_file,
@@ -522,11 +524,25 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   ctx$all_species <- sort(unique(result$clean_data$species[!is.na(result$clean_data$species)]))
   ctx$work_dir    <- run_env$run_dir   # ingest wrote clean_occurrences.tsv here
 
+  # A service run's taxon lists (species_scope, force_reprocess) must name taxa
+  # that exist in the input. Checked now that the input's taxa are known and
+  # before anything is written to the output root, so a refusal is still exit
+  # code 2, with every refused entry listed in preflight.json.
+  local({
+    taxa_problems <- check_run_taxa(CONFIG, ctx$all_species)
+    if (nrow(taxa_problems) > 0L) {
+      refuse_run(taxa_problems, sprintf(
+        "The run file names %d taxon/taxa that are not in the input file.",
+        nrow(taxa_problems)), CONFIG)
+    }
+  })
+
   if (!dir.exists(ctx$current_scaffolding_dir)) {
     dir.create(ctx$current_scaffolding_dir, recursive = TRUE, showWarnings = FALSE)
   }
   
   # Module 1B: Vernacular Names (on full dataset)
+  mark_phase("full_cohort_enrichment")   # 1B, 2A-2C, 1C, 1D: every taxon, before the gate
   cat("\n[MODULE 1B] Generating vernacular names...\n")
   vernacular_lookup <- generate_vernacular_file(
     result,
@@ -579,6 +595,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   # here and have their artifacts referenced from a prior version via the
   # manifest written by Module 9.
   
+  mark_phase("change_detection")
   cat("\n[PHASE 1.5] Detecting per-species changes...\n")
   ctx <- detect_species_changes(ctx)
   
@@ -653,6 +670,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("\n")
   
   # Module 3A: Calculate Metrics & IUCN Categorization
+  mark_phase("indigenous_branch")
   cat("\n[MODULE 3A] Calculating indigenous metrics...\n")
   result_indigenous <- calculate_indigenous_metrics(
     result_indigenous,
@@ -755,6 +773,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("\n")
   
   # Module 4A: Calculate Metrics & Categorization (local/widespread)
+  mark_phase("non_indigenous_branch")
   cat("\n[MODULE 4A] Calculating non-indigenous metrics...\n")
   result_non_indigenous <- calculate_non_indigenous_metrics(
     result_non_indigenous,
@@ -804,6 +823,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("==============================================================\n")
   cat("\n")
   
+  mark_phase("merge_and_narratives")
   cat("\n[MODULE 5] Merging Scenario 3 species (both population types)...\n")
   scenario3_merged <- merge_scenario3_reports(
     scenario_table = scenario_table,
@@ -900,6 +920,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("==============================================================\n")
   cat("\n")
   
+  mark_phase("temporal")
   log_info("=== PHASE 5C: TEMPORAL CHANGE DETECTION ===", module = "MAIN")
   
   # Source temporal modules (11, 12, 13 should already be in module_files,
@@ -1028,6 +1049,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("==============================================================\n")
   cat("\n")
   
+  mark_phase("maps")
   cat("\n[MODULE 8] Generating maps for all scenarios...\n")
   all_maps <- generate_all_maps(
     scenario_table = scenario_table,
@@ -1095,6 +1117,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
     }
   }
   
+  mark_phase("citations")
   cat("\n[MODULE 7] Generating citations for all species...\n")
   
   # Pass temporal record tags if available (from Phase 5C)
@@ -1126,6 +1149,7 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("==============================================================\n")
   cat("\n")
   
+  mark_phase("export")
   cat("\n[MODULE 9] Creating individual species packages...\n")
   species_packages <- export_species_packages(
     ctx = ctx,
@@ -1207,6 +1231,9 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   
   mark_run_complete(run_env$run_dir)
   temporal_checkpoint_close(state_dir_of(CONFIG))
+  log_info("Run cost by phase (also in status.json for a service run):", module = "MAIN")
+  for (p in .phase_table()) log_info("  %-24s %9.1f s", p$phase, p$seconds, module = "MAIN")
+  if (!is.null(peak_rss_mb())) log_info("  peak memory %13.0f MB", peak_rss_mb(), module = "MAIN")
   log_info(">>> PIPELINE COMPLETE - ALL PHASES FINISHED <<<", module = "MAIN")
   write_run_status(CONFIG, "succeeded",
                    extra = list(revision_dir = normalizePath(ctx$current_version_dir,

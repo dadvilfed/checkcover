@@ -41,7 +41,25 @@
   "is_extinct", "is_type_locality", "population_status",
   "status.x", "accuracy",
   "doi", "url", "citation", "contributor",
-  "confidentiality_level", "is_sensitive"
+  "confidentiality_level", "is_sensitive",
+  # Added for the clean 1.0 (2026-09): input that reaches the packages but was
+  # outside the fingerprint, so editing it in WoC left a stale package marked
+  # "unchanged".
+  #   occurrence_origin   the verbatim value (introduced / invasive / ...), which
+  #                       the non-indigenous reports and narratives print; the
+  #                       derived native/alien status.x alone missed such edits
+  #   country, continents, admin_1
+  #                       WoC's curated geography, authoritative since 2026-07:
+  #                       country counts, continents, distribution category
+  #   extinction_remarks  occurrenceRemarks of records with an extinction claim,
+  #                       parsed for the extinction cause in the narrative
+  #   citation_all, doi_all, url_all
+  #                       every source of a consolidated duplicate group, which
+  #                       the bibliography prints; `citation` alone is only the
+  #                       surviving record's, so an edit on another member of
+  #                       the group went unseen
+  "occurrence_origin", "country", "continents", "admin_1", "extinction_remarks",
+  "citation_all", "doi_all", "url_all"
 )
 
 # Regex Lucian's WoC platform uses to detect version folders. Anything that
@@ -297,13 +315,20 @@ list_prior_versions <- function(root_dir, current_version = NULL) {
   all_dirs    <- list.dirs(root_dir, recursive = FALSE, full.names = FALSE)
   version_dirs <- all_dirs[grepl(.VERSION_FOLDER_REGEX, all_dirs)]
 
+  if (length(version_dirs) == 0L) return(character(0))
+  keys <- vapply(version_dirs, .version_sort_key, numeric(1))
+
+  # "Prior" means numerically EARLIER, compared by component: 1.10 comes after
+  # 1.9, and 1.100 after 1.99. Folders at or after the current version are
+  # never a predecessor, so a revision can only inherit from one that precedes
+  # it. (The preflight refuses a version that is not after the latest anyway.)
   if (!is.null(current_version)) {
-    version_dirs <- setdiff(version_dirs, as.character(current_version))
+    keep <- keys < .version_sort_key(current_version)
+    version_dirs <- version_dirs[keep]; keys <- keys[keep]
   }
   if (length(version_dirs) == 0L) return(character(0))
 
-  keys <- vapply(version_dirs, .version_sort_key, numeric(1))
-  version_dirs[order(keys, decreasing = TRUE)]
+  unname(version_dirs[order(keys, decreasing = TRUE)])
 }
 
 

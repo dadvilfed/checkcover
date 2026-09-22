@@ -46,6 +46,7 @@ write.table(
 mk <- function(...) {
   base <- list(
     input_file = good_input,
+    framework_version = "1.0",
     root_output_dir = file.path(tmp, "out"),
     vernaculars = list(path = file.path(tmp, "vern.tsv")),
     dictionaries = list(feow = file.path(tmp, "feow.tsv"),

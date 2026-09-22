@@ -41,6 +41,40 @@ RUN_FILE_ONLY     <- c("run_id")   # keys that are not CONFIG settings
 
 .CHECKOVER_EXIT <- new.env(parent = emptyenv())
 .CHECKOVER_EXIT$refused <- FALSE
+.CHECKOVER_EXIT$started <- Sys.time()
+.CHECKOVER_EXIT$phases  <- list()
+
+#' Peak resident memory of this R process so far, in MB (Linux; NULL elsewhere).
+#'
+#' VmHWM is the high-water mark of the process's resident set. cheCkOVER runs as
+#' a single R process, so this is the peak RAM of the whole run.
+peak_rss_mb <- function(status_file = "/proc/self/status") {
+  if (!file.exists(status_file)) return(NULL)
+  l <- grep("^VmHWM:", readLines(status_file, warn = FALSE), value = TRUE)
+  if (!length(l)) return(NULL)
+  round(as.numeric(gsub("[^0-9]", "", l[1])) / 1024, 1)
+}
+
+#' Start a named phase of the run. Its duration runs until the next phase
+#' starts, or until the final status is written. A service run's status.json is
+#' refreshed at every phase, so the runner can also read progress from it.
+mark_phase <- function(name, config = NULL) {
+  ph <- .CHECKOVER_EXIT$phases
+  ph[[length(ph) + 1L]] <- list(name = name, started = Sys.time())
+  .CHECKOVER_EXIT$phases <- ph
+  if (is.null(config) && exists("CONFIG", envir = globalenv())) config <- get("CONFIG", envir = globalenv())
+  if (!is.null(config$service)) write_run_status(config, "running")
+  invisible(name)
+}
+
+.phase_table <- function(now = Sys.time()) {
+  ph <- .CHECKOVER_EXIT$phases
+  lapply(seq_along(ph), function(i) {
+    end <- if (i < length(ph)) ph[[i + 1L]]$started else now
+    list(phase = ph[[i]]$name,
+         seconds = round(as.numeric(difftime(end, ph[[i]]$started, units = "secs")), 1))
+  })
+}
 
 .rf_or <- function(a, b) if (is.null(a)) b else a
 
@@ -55,6 +89,19 @@ state_dir_of <- function(config) {
 }
 
 .single_string <- function(v) is.character(v) && length(v) == 1L && !is.na(v) && nzchar(v)
+
+# Taxon lists in a run file (species_scope, and force_reprocess when it is a
+# list) hold PACKAGE IDS: the manifest's keys and the folder names, e.g.
+# "Astacus_astacus", "Cambarellus_pandicambarus_rotatus". One form, so a
+# manifest's deferred entries become the next run's species_scope unchanged. A
+# display name (spaces, parentheses) is refused, never translated.
+.package_id_form_problems <- function(key, v) {
+  if (!is.character(v)) return(character(0))
+  bad <- v[is.na(v) | !nzchar(v) | grepl("[[:space:]()]", v) | grepl("^_|_$|__", v)]
+  vapply(unique(bad), function(b) sprintf(
+    "entry \"%s\" is not a package id. Taxa are listed by package id, e.g. \"Astacus_astacus\" (the manifest key and folder name).",
+    b), character(1))
+}
 
 # Returns NULL when the value is acceptable, otherwise what is wrong with it.
 .run_value_problem <- function(key, v) {
@@ -150,6 +197,11 @@ apply_run_file <- function(config, path = Sys.getenv("CHECKOVER_RUN", unset = ""
   for (k in intersect(names(rf), settable)) {
     msg <- .run_value_problem(k, rf[[k]])
     if (!is.null(msg)) problems[[length(problems) + 1L]] <- .problem("FATAL", k, msg)
+    if (is.null(msg) && k %in% c("species_scope", "force_reprocess")) {
+      for (m in .package_id_form_problems(k, rf[[k]])) {
+        problems[[length(problems) + 1L]] <- .problem("FATAL", k, m)
+      }
+    }
   }
   if (length(problems) > 0L) {
     refuse_run(do.call(rbind, problems),
@@ -168,6 +220,31 @@ apply_run_file <- function(config, path = Sys.getenv("CHECKOVER_RUN", unset = ""
 
   config$service <- service_paths(path, run_id = rf$run_id)
   config
+}
+
+#' Taxa named by a run file that are not in the input.
+#'
+#' Called right after ingest, when the input's taxa are known and before
+#' anything is written to the output root, so a refusal is still exit code 2.
+#' A taxon counts as present when its package id (make_package_id() of the
+#' normalised name) equals the entry.
+#'
+#' @param species The input's taxa (normalised names, ctx$all_species).
+#' @return A data frame of problems, one row per refused entry (may be empty).
+check_run_taxa <- function(config, species, id_fun = make_package_id) {
+  if (is.null(config$service)) return(.problem(character(), character(), character()))
+  ids <- unique(id_fun(species))
+  rows <- list()
+  for (k in c("species_scope", "force_reprocess")) {
+    v <- config[[k]]
+    if (!is.character(v)) next
+    for (e in unique(setdiff(v, ids))) {
+      rows[[length(rows) + 1L]] <- .problem("FATAL", k, sprintf(
+        "entry \"%s\" matches no taxon in the input file. Taxa are listed by package id; check the spelling against the manifest keys.",
+        e))
+    }
+  }
+  if (length(rows)) do.call(rbind, rows) else .problem(character(), character(), character())
 }
 
 # ── Status and refusal files ─────────────────────────────────────────────────
@@ -206,13 +283,21 @@ write_run_status <- function(config, status, message = NULL, extra = list()) {
   svc <- config$service
   if (is.null(svc)) return(invisible(FALSE))
   exit_code <- switch(status, succeeded = 0L, failed = 1L, refused = 2L, NULL)
+  now <- Sys.time()
+  ph  <- .phase_table(now)
+  fmt <- function(t) format(t, "%Y-%m-%dT%H:%M:%S%z")
   x <- c(list(
     status            = status,
     run_id            = svc$run_id,
     framework_version = .rf_or(config$framework_version, NA_character_),
     exit_code         = exit_code,
     message           = message,
-    updated_at        = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
+    current_phase     = if (status == "running" && length(ph)) ph[[length(ph)]]$phase else NULL,
+    started_at        = fmt(.CHECKOVER_EXIT$started),
+    updated_at        = fmt(now),
+    elapsed_seconds   = round(as.numeric(difftime(now, .CHECKOVER_EXIT$started, units = "secs")), 1),
+    peak_rss_mb       = peak_rss_mb(),
+    phases            = if (length(ph)) ph else NULL
   ), extra)
   invisible(.write_json_file(x[!vapply(x, is.null, logical(1))], svc$status_file))
 }

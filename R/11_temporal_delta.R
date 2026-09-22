@@ -103,7 +103,7 @@ clean_species_name <- function(species) {
 }
 
 # Internal: sortable key for "v1.10" > "v1.2" comparison (numeric, not lexical)
-.version_sort_key <- function(v) {
+.temporal_version_key <- function(v) {
   parts <- as.numeric(strsplit(sub("^v", "", v), "\\.", fixed = FALSE)[[1]])
   if (length(parts) == 1L) parts <- c(parts, 0)
   parts[1] * 1e6 + parts[2]
@@ -145,7 +145,7 @@ detect_prior_artifacts <- function(species_clean, root_output_dir = NULL) {
   
   versions <- unique(stringr::str_extract(files, "v[0-9]+\\.[0-9]+"))
   
-  latest_version <- versions[which.max(vapply(versions, .version_sort_key, numeric(1)))]
+  latest_version <- versions[which.max(vapply(versions, .temporal_version_key, numeric(1)))]
   
   json_file <- file.path(out_dir, sprintf("%s_%s.json", species_clean, latest_version))
   latest_date <- if (file.exists(json_file)) {
@@ -165,7 +165,7 @@ detect_prior_artifacts <- function(species_clean, root_output_dir = NULL) {
     latest_version  = latest_version,
     latest_date     = latest_date,
     latest_files    = latest_files,
-    all_versions    = versions[order(vapply(versions, .version_sort_key, numeric(1)))]
+    all_versions    = versions[order(vapply(versions, .temporal_version_key, numeric(1)))]
   )
 }
 

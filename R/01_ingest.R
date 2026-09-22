@@ -275,7 +275,13 @@ map_woc_to_checkover <- function(woc_data, module = "MODULE1_INGEST") {
 
       # Contributors and additional metadata
       contributor = str_trim(Contributor),
-      comments    = str_trim(Comments)
+      comments    = str_trim(Comments),
+
+      # The remarks that reach a package: the extinction cause in the narrative
+      # is parsed from the remarks of records with an extinction claim. Kept as
+      # its own column so the fingerprint sees exactly those, and an edited
+      # remark on an ordinary record does not force a reprocess.
+      extinction_remarks = ifelse(is_extinct, comments, NA_character_)
     ) %>%
 
     # Select only relevant columns for cheCkOVER
@@ -302,7 +308,8 @@ map_woc_to_checkover <- function(woc_data, module = "MODULE1_INGEST") {
       confidentiality_level,
       is_sensitive,
       contributor,
-      comments
+      comments,
+      extinction_remarks
     ) %>%
 
     identity()
@@ -588,7 +595,79 @@ resolve_taxonomy <- function(species_list, module = "MODULE1_INGEST") {
 }
 
 #' Main ingest and clean function
-ingest_clean <- function(file_path, output_dir = "checkover_output", 
+#' Row order that makes de-duplication independent of the export's row order.
+#'
+#' Sorts by the duplicate key (species, coordinates, year), then by record_id,
+#' then by every other column that enters the fingerprint, so the first row of
+#' each duplicate group (the one distinct() keeps) is the same whatever order
+#' the rows arrived in: the record with the smallest record_id, and on a
+#' record_id tie (e.g. a template without occurrenceID) the one whose values
+#' sort first.
+#'
+#' @return An integer permutation of seq_len(nrow(df)).
+order_for_consolidation <- function(df) {
+  key_cols <- c("species", "longitude", "latitude", "year", "record_id",
+                "is_extinct", "is_type_locality", "population_status", "status",
+                "accuracy", "doi", "url", "citation", "contributor",
+                "confidentiality_level", "is_sensitive")
+  cols <- lapply(intersect(key_cols, names(df)), function(k) {
+    v <- df[[k]]
+    if (is.numeric(v)) v else as.character(v)
+  })
+  if (!length(cols)) return(seq_len(nrow(df)))
+  do.call(order, c(cols, list(na.last = TRUE, method = "radix")))
+}
+
+#' Collapse duplicate records (species + coordinates + year), keeping every
+#' citation, DOI and URL of the group on the survivor in *_all columns.
+#'
+#' Independent of the order of rows in the export: the same records in any
+#' order give the same survivors and the same *_all values.
+#'
+#' @param clean_data Mapped records (map_woc_to_checkover()).
+#' @return The consolidated records, species names normalised.
+consolidate_duplicates <- function(clean_data) {
+  # The one species-name rule (see normalize_species_name() in 00_helpers.R),
+  # applied BEFORE de-duplication: "Astacus  astacus" and "Astacus astacus" are
+  # one taxon, so their records must meet in one duplicate group.
+  clean_data$species <- normalize_species_name(clean_data$species)
+
+  # Rows in a fixed order, so the survivor of every duplicate group — and with
+  # it the record_id, citation and flags that enter the fingerprint — does not
+  # depend on the order of rows in the export. Before this, re-exporting
+  # identical data in a different row order could change a taxon's fingerprint
+  # and trigger a reprocess although nothing had changed (and a freshness card
+  # computed on the data would disagree with the run).
+  clean_data <- clean_data[order_for_consolidation(clean_data), , drop = FALSE]
+
+  dup_key <- paste(clean_data$species, clean_data$longitude,
+                   clean_data$latitude, clean_data$year, sep = "\r")
+
+  .join_unique <- function(x) {
+    v <- trimws(as.character(x))
+    v <- v[!is.na(v) & nzchar(v)]
+    if (!length(v)) NA_character_ else paste(unique(v), collapse = " | ")
+  }
+  .by_group <- function(col) {
+    if (!col %in% names(clean_data)) return(rep(NA_character_, nrow(clean_data)))
+    unname(vapply(split(clean_data[[col]], dup_key), .join_unique,
+                  character(1))[dup_key])
+  }
+
+  clean_data$citation_all <- .by_group("citation")
+  clean_data$doi_all      <- .by_group("doi")
+  clean_data$url_all      <- .by_group("url")
+  clean_data$n_sources    <- lengths(strsplit(
+    ifelse(is.na(clean_data$citation_all), "", clean_data$citation_all),
+    "\\s*\\|\\s*"))
+
+  keep <- !duplicated(dup_key)            # first row of each group, in the fixed order
+  out <- clean_data[keep, , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+ingest_clean <- function(file_path, output_dir = "checkover_output",
                          resolve_taxonomy = TRUE) {
   module <- "MODULE1_INGEST"
   
@@ -636,29 +715,7 @@ ingest_clean <- function(file_path, output_dir = "checkover_output",
     # carried onto the survivor in *_all columns, pipe-joined. Module 7 expands
     # those back out, so a consolidated record contributes to the reference
     # count of each source that reported it (Lucian, 2026-09).
-    dup_key <- paste(clean_data$species, clean_data$longitude,
-                     clean_data$latitude, clean_data$year, sep = "\r")
-
-    .join_unique <- function(x) {
-      v <- trimws(as.character(x))
-      v <- v[!is.na(v) & nzchar(v)]
-      if (!length(v)) NA_character_ else paste(unique(v), collapse = " | ")
-    }
-    .by_group <- function(col) {
-      if (!col %in% names(clean_data)) return(rep(NA_character_, nrow(clean_data)))
-      unname(vapply(split(clean_data[[col]], dup_key), .join_unique,
-                    character(1))[dup_key])
-    }
-
-    clean_data$citation_all <- .by_group("citation")
-    clean_data$doi_all      <- .by_group("doi")
-    clean_data$url_all      <- .by_group("url")
-    clean_data$n_sources    <- lengths(strsplit(
-      ifelse(is.na(clean_data$citation_all), "", clean_data$citation_all),
-      "\\s*\\|\\s*"))
-
-    clean_data <- clean_data %>%
-      dplyr::distinct(species, longitude, latitude, year, .keep_all = TRUE)
+    clean_data <- consolidate_duplicates(clean_data)
     n_dedup <- n_mapped - nrow(clean_data)
 
     n_multi_src <- sum(clean_data$n_sources > 1L, na.rm = TRUE)
@@ -666,9 +723,6 @@ ingest_clean <- function(file_path, output_dir = "checkover_output",
       log_info("Consolidation retained multiple citations on %d record(s).",
                n_multi_src, module = module)
     }
-
-    # The one species-name rule; see normalize_species_name() in 00_helpers.R.
-    clean_data$species <- normalize_species_name(clean_data$species)
 
     yr_bad  <- !dplyr::between(clean_data$year, 1500, year_now)
     yr_bad[is.na(yr_bad)] <- TRUE

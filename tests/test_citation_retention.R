@@ -28,8 +28,10 @@ for (p in c("dplyr", "jsonlite")) {
   }
 }
 suppressWarnings(suppressMessages({
-  library(dplyr)
+  library(dplyr); library(stringr)
+  source("config.R")   # CHECKOVER_REFERENCE, for the CITATION.cff Module 7 writes
   source("R/00_logging.R"); source("R/00_helpers.R"); source("R/07_citations.R")
+  source("R/00_geo_canon.R"); source("R/00_dwc_fields.R"); source("R/01_ingest.R")
 }))
 
 pass <- 0L; fail <- 0L
@@ -41,16 +43,8 @@ quiet <- function(e) { t <- tempfile(); sink(t); on.exit({sink(); unlink(t)}, ad
 
 cat("[test_citation_retention]\n")
 
-# The consolidation step, as 01_ingest.R performs it.
-consolidate <- function(d) {
-  key <- paste(d$species, d$longitude, d$latitude, d$year, sep = "\r")
-  ju <- function(x) { v <- trimws(as.character(x)); v <- v[!is.na(v) & nzchar(v)]
-                      if (!length(v)) NA_character_ else paste(unique(v), collapse = " | ") }
-  d$citation_all <- unname(vapply(split(d$citation, key), ju, character(1))[key])
-  d$n_sources <- lengths(strsplit(ifelse(is.na(d$citation_all), "", d$citation_all),
-                                  "\\s*\\|\\s*"))
-  dplyr::distinct(d, species, longitude, latitude, year, .keep_all = TRUE)
-}
+# The real consolidation step of 01_ingest.R.
+consolidate <- function(d) consolidate_duplicates(d)
 
 # One occurrence, reported by three publications; plus a separate occurrence.
 raw <- data.frame(
@@ -76,6 +70,20 @@ ok(con$n_sources[2] == 1, "an unconsolidated record has one source")
 # Duplicate citations within a group collapse.
 dup <- raw; dup$citation <- c("Smith 1999", "Smith 1999", "Jones 2003", "Solo 2020")
 ok(consolidate(dup)$n_sources[1] == 2, "identical citations are not double-counted")
+
+# ---- the export's row order must not matter ----
+# The survivor's record_id and citation enter the fingerprint, so a survivor
+# that depended on row order would make a re-export of identical data look
+# changed, and the run would disagree with a freshness card computed on the data.
+shuffled <- raw[c(3, 1, 4, 2), ]
+ok(identical(consolidate(shuffled), con),
+   "the same records in another row order consolidate identically (survivor and citation_all)")
+ok(identical(con$record_id[1], "R1"),
+   "the survivor is the record with the smallest record_id, whatever the input order")
+
+variants <- raw; variants$species[2] <- "Astacus   astacus "
+ok(nrow(consolidate(variants)) == 2 && consolidate(variants)$n_sources[1] == 3,
+   "names are normalised before de-duplication: spacing variants meet in one group")
 
 # ---- Module 7 must expand them back out ----
 out <- file.path(tempdir(), paste0("cit_", as.integer(runif(1) * 1e8)))

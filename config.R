@@ -222,6 +222,40 @@ CONFIG <- list(
 # the settings above, so a service can run cheCkOVER without editing this file.
 # See README "Running as a service" and R/00_run_file.R.
 
+# How to cite cheCkOVER. Every species package carries this reference, as
+# preferred-citation in its CITATION.cff and as preferred_citation in
+# package_metadata.json, so the packages and the World of Crayfish site say the
+# same thing (Lucian, 2026-09). This is the ONE place it lives on this side:
+# when the paper is published, change it here (and nowhere else).
+#
+# `text` is the reference exactly as agreed; the structured fields feed the CFF
+# and must reproduce `text` (tests/test_citation.R checks that they do).
+# Non-ASCII letters are written as escapes so the code points are unambiguous:
+# â = a-circumflex, Ș = S-comma, ă = a-breve, ț = t-comma,
+# ® = registered sign.
+#
+# Not part of CONFIG on purpose: a run file must not be able to change it.
+CHECKOVER_REFERENCE <- list(
+  text    = paste0(
+    "Livadariu D, Bâcu VI, Nandra CI, Ștefănuț TT, Sabou A, ",
+    "WoC® Contributors, Crandall KA, Pârvulescu L: cheCkOVER: ",
+    "Assessment-support workflow for biogeographic metrics from species ",
+    "occurrence data. https://doi.org/10.64898/2025.12.29.696807"),
+  title   = "cheCkOVER: Assessment-support workflow for biogeographic metrics from species occurrence data",
+  doi     = "10.64898/2025.12.29.696807",
+  status  = "preprint",          # CFF `status`; drop when the paper is published
+  authors = list(
+    list(family = "Livadariu",                    given = "D"),
+    list(family = "Bâcu",                    given = "VI"),
+    list(family = "Nandra",                       given = "CI"),
+    list(family = "Ștefănuț",      given = "TT"),
+    list(family = "Sabou",                        given = "A"),
+    list(name   = "WoC® Contributors"),
+    list(family = "Crandall",                     given = "KA"),
+    list(family = "Pârvulescu",              given = "L")
+  )
+)
+
 # Required R packages, available from CRAN.
 #
 # Every package here is actually used. Sixteen were removed in 2026-09 after

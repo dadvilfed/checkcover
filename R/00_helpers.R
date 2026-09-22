@@ -257,6 +257,58 @@ normalize_species_name <- function(x) {
 #' five level-8 polygons has no name of its own.
 HB_TOPOLOGY_FIELDS <- c("MAIN_BAS", "NEXT_DOWN")
 
+# ── How to cite cheCkOVER (CHECKOVER_REFERENCE in config.R) ──────────────────
+
+.reference_or_default <- function(ref) {
+  if (!is.null(ref)) return(ref)
+  if (exists("CHECKOVER_REFERENCE", envir = globalenv())) get("CHECKOVER_REFERENCE", envir = globalenv())
+  else stop("CHECKOVER_REFERENCE is not defined: source config.R first.", call. = FALSE)
+}
+
+#' The reference as one line, rebuilt from its structured fields.
+#'
+#' Authors "Family Given" (or the group name) joined by ", ", then ": ", the
+#' title, ". ", and the DOI as a URL. Must equal CHECKOVER_REFERENCE$text.
+checkover_reference_from_parts <- function(ref = NULL) {
+  ref <- .reference_or_default(ref)
+  who <- vapply(ref$authors, function(a)
+    if (!is.null(a$name)) a$name else paste(a$family, a$given), character(1))
+  sprintf("%s: %s. https://doi.org/%s", paste(who, collapse = ", "), ref$title, ref$doi)
+}
+
+#' The reference as package_metadata.json carries it (`preferred_citation`).
+checkover_reference_metadata <- function(ref = NULL) {
+  ref <- .reference_or_default(ref)
+  list(
+    text    = ref$text,
+    title   = ref$title,
+    doi     = ref$doi,
+    url     = paste0("https://doi.org/", ref$doi),
+    authors = lapply(ref$authors, function(a)
+      if (!is.null(a$name)) list(name = a$name)
+      else list(family_names = a$family, given_names = a$given))
+  )
+}
+
+#' The `preferred-citation:` block of a CITATION.cff (CFF 1.2.0), as lines.
+checkover_reference_cff <- function(ref = NULL) {
+  ref <- .reference_or_default(ref)
+  q <- function(x) sprintf('"%s"', gsub('"', '\\\\"', x))
+  who <- unlist(lapply(ref$authors, function(a) {
+    if (!is.null(a$name)) sprintf("    - name: %s", q(a$name))
+    else c(sprintf("    - family-names: %s", q(a$family)),
+           sprintf("      given-names: %s", q(a$given)))
+  }))
+  c("preferred-citation:",
+    "  type: article",
+    if (!is.null(ref$status)) sprintf("  status: %s", ref$status),
+    sprintf("  title: %s", q(ref$title)),
+    "  authors:",
+    who,
+    sprintf("  doi: %s", q(ref$doi)),
+    sprintf("  url: %s", q(paste0("https://doi.org/", ref$doi))))
+}
+
 #' Format HydroBASINS ids as exact decimal strings.
 #'
 #' The source shapefiles store ids as doubles, and R's default conversion of a

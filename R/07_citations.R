@@ -430,7 +430,10 @@ keywords:
 license: CC-BY-4.0
 '
       )
-      writeLines(cff_txt, cff_file, useBytes = TRUE)
+      # preferred-citation: the cheCkOVER reference, identical in every package
+      # and on the World of Crayfish site (CHECKOVER_REFERENCE in config.R).
+      writeLines(enc2utf8(c(as.character(cff_txt), checkover_reference_cff())),
+                 cff_file, useBytes = TRUE)
       
       log_info("  Generated %d references (%d formats), top ref count=%d",
                nrow(pub_dedup), 4, pub_dedup$count[1], module = module)

@@ -358,7 +358,11 @@ export_species_packages <- function(ctx,
           code_version = ctx$code_version %||% "unknown",
           generated_date = as.character(Sys.Date())
         ),
-        
+
+        # How to cite cheCkOVER: the same reference as preferred-citation in
+        # the package's CITATION.cff and on the World of Crayfish site.
+        preferred_citation = checkover_reference_metadata(),
+
         contents = list(
           maps       = list.files(file.path(species_dir, "maps")),
           narratives = list.files(file.path(species_dir, "narratives")),
@@ -441,11 +445,13 @@ export_species_packages <- function(ctx,
         "## License\n\n",
         "CC-BY-4.0\n\n",
         "## Citation\n\n",
-        "See `citations/` folder for detailed references.\n"
+        "Please cite cheCkOVER as:\n\n",
+        "> ", CHECKOVER_REFERENCE$text, "\n\n",
+        "The sources of the occurrence records are in the `citations/` folder.\n"
       )
       
       readme_file <- file.path(species_dir, "README.md")
-      writeLines(readme_text, readme_file)
+      writeLines(enc2utf8(readme_text), readme_file, useBytes = TRUE)   # UTF-8 in any locale
       
       log_info("  Package complete: %d files total", files_count, module = module)
       

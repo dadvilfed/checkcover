@@ -40,12 +40,28 @@ s3 <- transform(e1, status.x = c("native", "native", "native"))
 origin_ok <- !identical(compute_species_fingerprint(s1), compute_species_fingerprint(s2)) &&
              identical(compute_species_fingerprint(s1), compute_species_fingerprint(s3))
 
+# Input that reaches the packages must be in the fingerprint (clean 1.0): WoC's
+# curated geography, the verbatim occurrence origin, and the remarks of records
+# with an extinction claim. Remarks on ordinary records stay out.
+g1 <- transform(e1, country = "Romania", continents = "Europe", admin_1 = "Arad",
+                occurrence_origin = "introduced", extinction_remarks = NA_character_)
+fpg <- function(d) compute_species_fingerprint(d)
+g_country <- g1; g_country$country[2] <- "Hungary"
+g_origin  <- g1; g_origin$occurrence_origin[2] <- "invasive"
+g_extrem  <- g1; g_extrem$extinction_remarks[1] <- "crayfish plague 2019"
+g_plain   <- transform(g1, comments = c("seen from bridge", NA, NA))
+g_all     <- transform(g1, citation_all = c("Smith 1999 | Jones 2003", NA, NA))
+g_all2    <- transform(g1, citation_all = c("Smith 1999 | Jones 2004", NA, NA))
+inputs_ok <- !identical(fpg(g1), fpg(g_country)) && !identical(fpg(g1), fpg(g_origin)) &&
+             !identical(fpg(g1), fpg(g_extrem)) && identical(fpg(g1), fpg(g_plain)) &&
+             !identical(fpg(g_all), fpg(g_all2))
+
 pass <- identical(fp1, fp2) && !identical(fp1, fp3) &&
         identical(compute_species_fingerprint(e1), compute_species_fingerprint(e2)) &&
-        origin_ok
+        origin_ok && inputs_ok
 
-cat(sprintf("[test_fingerprint] NA-id order-independent:%s  detects-change:%s  legacy-ok:%s  origin:%s -> %s\n",
+cat(sprintf("[test_fingerprint] NA-id order-independent:%s  detects-change:%s  legacy-ok:%s  origin:%s  package-inputs:%s -> %s\n",
             identical(fp1, fp2), !identical(fp1, fp3),
             identical(compute_species_fingerprint(e1), compute_species_fingerprint(e2)),
-            origin_ok, if (pass) "PASS" else "FAIL"))
+            origin_ok, inputs_ok, if (pass) "PASS" else "FAIL"))
 quit(status = if (pass) 0 else 1)

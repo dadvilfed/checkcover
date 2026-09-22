@@ -69,6 +69,9 @@ COPY checkcover_main.R config.R  ./
 # name. config.R must point at whatever names are used here.
 COPY WoC_canonical_country_continent.tsv WoC_canonical_geography.md ./
 COPY "(Table_S2)vernacular_names_wide.tsv" "(Table_S4)ecoregions_list.tsv" ./
+# The HydroBASINS name lookup (CONFIG$dictionaries$hydrobasins). Without it the
+# preflight refuses every run in the container.
+COPY Table_S3.tsv ./
 
 # Fail fast on a broken image: the suite runs without occurrence data or
 # reference layers, so it is a genuine smoke test of the build.
