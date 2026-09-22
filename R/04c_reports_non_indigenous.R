@@ -277,81 +277,10 @@ generate_non_indigenous_reports <- function(result_non_indigenous,
 
 # ===========================================================================
 # MODULE-PRIVATE HELPERS
-# (Shared with 03c via sourcing; safe to define here as well since R uses
-#  the most recently defined version.)
 # ===========================================================================
-
-.extract_vern_map_3c <- function(vernacular_lookup) {
-  if (is.null(vernacular_lookup)) return(NULL)
-  if (is.list(vernacular_lookup) && "wide" %in% names(vernacular_lookup))
-    return(vernacular_lookup$wide)
-  if (is.data.frame(vernacular_lookup)) return(vernacular_lookup)
-  NULL
-}
-
-.get_vern_str_3c <- function(sp, vern_map) {
-  if (is.null(vern_map) || !"species" %in% names(vern_map)) return(NA_character_)
-  idx <- match(sp, vern_map$species)
-  if (is.na(idx) || !"vernacular_string" %in% names(vern_map)) return(NA_character_)
-  raw_v <- vern_map$vernacular_string[idx]
-  if (is.na(raw_v) || !nzchar(raw_v)) return(NA_character_)
-  gsub("^[\"\u2018\u2019\u201C\u201D]+|[\"\u2018\u2019\u201C\u201D]+$", "", raw_v)
-}
-
-.first_val <- function(x) {
-  v <- x[!is.na(x) & nzchar(x)]
-  if (length(v) == 0) return(NA_character_)
-  v[1]
-}
-
-.build_higher_taxonomy <- function(order, superfamily, family) {
-  parts <- c(order, superfamily, family)
-  parts <- parts[!is.na(parts) & nzchar(parts)]
-  if (length(parts) == 0) return(NA_character_)
-  paste(parts, collapse = " > ")
-}
-
-.load_feow_map_3c <- function(feow_lookup_path, module) {
-  if (is.null(feow_lookup_path) || !file.exists(feow_lookup_path)) return(NULL)
-  feow_map <- tryCatch(
-    read.delim(feow_lookup_path, stringsAsFactors = FALSE,
-               encoding = "UTF-8", quote = ""),
-    error = function(e) {
-      log_warn("Failed to load FEOW lookup: %s", conditionMessage(e), module = module)
-      NULL
-    }
-  )
-  if (is.null(feow_map)) return(NULL)
-  names(feow_map) <- toupper(names(feow_map))
-  if ("ID" %in% names(feow_map)) feow_map$ID <- as.integer(feow_map$ID)
-  log_info("FEOW lookup loaded: %d rows", nrow(feow_map), module = module)
-  feow_map
-}
-
-.resolve_feow_3c <- function(x, feow_map) {
-  if (is.null(feow_map) || length(x) == 0) return(x)
-  id_col   <- intersect(c("ID", "FEOW_ID"),                       names(feow_map))[1]
-  name_col <- intersect(c("ECOREGION", "NAME", "ECOREGION_NAME"), names(feow_map))[1]
-  if (is.na(id_col) || is.na(name_col)) return(x)
-  ids       <- suppressWarnings(as.integer(x))
-  match_idx <- match(ids, feow_map[[id_col]])
-  resolved  <- feow_map[[name_col]][match_idx]
-  ok        <- !is.na(resolved) & nzchar(resolved)
-  x[ok]     <- resolved[ok]
-  x
-}
-
-# Delegates to the ONE canonical resolver in 00_helpers.R (Lucian, 2026-08).
-# NB this file used to carry a SECOND full copy of .resolve_basin_3c(). Because
-# 04c is sourced after 03c, that copy silently overwrote the indigenous one, so
-# both branches ran whichever definition happened to load last. One resolver
-# now, in one place.
-.resolve_basin_3c <- function(x, hb_lookup) {
-  if (length(x) == 0) return(x)
-  resolve_basin_names(x, hb_lookup, fallback = "unnamed")$names
-}
-
-# NULL coalescing (safe re-definition)
-if (!exists("%||%", mode = "function")) {
-  `%||%` <- function(a, b) if (!is.null(a)) a else b
-}
+# .extract_vern_map_3c(), .get_vern_str_3c(), .first_val(),
+# .build_higher_taxonomy(), .load_feow_map_3c(), .resolve_feow_3c() and
+# .resolve_basin_3c() are defined ONCE, in 03c_reports_indigenous.R, which is
+# sourced before this file. They used to be copied here too; the copies were
+# identical, but the later one silently wins, so an edit to either copy could
+# be undone without a trace (tests/test_single_definitions.R forbids it now).

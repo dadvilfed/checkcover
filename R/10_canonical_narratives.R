@@ -424,18 +424,10 @@ generate_canonical_narratives <- function(scenario_table,
 }
 
 
-# ===========================================================================
-# HELPER: Safe numeric formatting
-# ===========================================================================
-.fmt_n <- function(x) {
-  if (is.null(x) || length(x) == 0 || all(is.na(x))) return("N/A")
-  format(round(as.numeric(x[[1]]), 0), big.mark = ",", scientific = FALSE)
-}
-
-.fmt_pct <- function(x) {
-  if (is.null(x) || length(x) == 0 || all(is.na(x))) return("N/A")
-  paste0(round(as.numeric(x[[1]]), 1), "%")
-}
+# (.fmt_n() and .fmt_pct() used to be defined here as well, but nothing in this
+# module called them, and 12_temporal_outputs.R, sourced later, defines its own
+# signed-delta versions, which silently replaced these. Removed: one definition
+# per name — tests/test_single_definitions.R.)
 
 
 # ===========================================================================

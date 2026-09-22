@@ -1,8 +1,12 @@
 #### HELPER FUNCTIONS ####
 # Shared utilities used across modules
 
-# Null coalescing operator
-`%||%` <- function(x, y) if (is.null(x)) y else x
+# Null coalescing operator: NULL or a zero-length value falls back to `y`.
+# The ONE definition. 11_temporal_delta.R used to redefine it (with the
+# zero-length rule) and, being sourced later, won for the whole pipeline while
+# tests ran this file's NULL-only version; the rule the pipeline actually ran
+# with is now the only one.
+`%||%` <- function(x, y) if (is.null(x) || length(x) == 0L) y else x
 
 # ---------------------------------------------------------------------------
 # Total-extinction / zero-active terminal state

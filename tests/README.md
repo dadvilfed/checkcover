@@ -34,6 +34,7 @@ Rscript tests/test_unit.R
 | `test_version_order.R` | Revisions compare by numeric component: builds 1.2 → 1.9 → 1.10 → 1.11 → 1.100 with real change detection; 1.100 is latest, each revision's predecessor and every taxon's source are right; the preflight refuses a number that is not after the latest | `digest`, `jsonlite`, `readr` |
 | `test_citation.R` | The cheCkOVER reference is exactly the agreed text (code points included), rebuilt from its fields, and carried as preferred-citation in the CFF Module 7 writes, in package_metadata.json and in the READMEs | `dplyr`, `jsonlite`, `glue` |
 | `test_github_packages.R` | GitHub-only packages are named once (`GITHUB_PACKAGES` in config.R): required ones pinned to a commit, the Dockerfile installs exactly that spec, and no code, message or instruction names another repository | base R only |
+| `test_single_definitions.R` | Parses (never runs) every file `checkcover_main.R` sources, in its order: no function is defined twice (the later copy would silently win), and every named argument in a call reaches a definition that accepts it. Written after a stale `resolve_basin_names()` in 04_reports.R killed the first full 1.0 run | base R only |
 | `test_species_scope.R` | `species_scope`: approved taxa reprocessed, others `deferred`/`deferred_new`; across two runs a deferred change is still seen (source fingerprint kept) | `digest`, `jsonlite`, `readr` |
 
 ## Notes

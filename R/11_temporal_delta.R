@@ -244,8 +244,8 @@ load_previous_version <- function(species_clean,
   )
 }
 
-# Null-coalescing operator (cheCkOVER convention)
-`%||%` <- function(a, b) if (is.null(a) || length(a) == 0L) b else a
+# (`%||%` comes from 00_helpers.R, which now carries this module's zero-length
+# rule. Redefining it here replaced the helper for the whole pipeline.)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

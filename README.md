@@ -612,7 +612,7 @@ Rscript tests/run_all.R                              # unit + regression suite
 Rscript tests/audit_packages.R checkover_output/1.0  # per-package integrity
 ```
 
-**`tests/run_all.R`** — every `tests/test_*.R` (33 at present), covering the
+**`tests/run_all.R`** — every `tests/test_*.R` (34 at present), covering the
 classifier, extinction handling, the geographic fallback, vocabulary, Darwin
 Core mapping, fingerprinting, species scope, service mode, revision numbering,
 the citation, basin resolution, narrative consistency and the coordinate-free

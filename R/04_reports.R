@@ -1,72 +1,12 @@
 #### MODULE 4: BUILD REPORTS ####
 
-# Helper: Load HydroBASINS name lookup
-load_hydrobasin_names <- function(tsv_path) {
-  if (!file.exists(tsv_path)) {
-    log_warn("HydroBASINS name lookup not found: %s", tsv_path, module = "MODULE4_REPORTS")
-    return(NULL)
-  }
-  
-  log_info("Loading HydroBASINS name lookup from: %s", tsv_path, module = "MODULE4_REPORTS")
-  
-  hb_names <- tryCatch({
-    read.delim(tsv_path, sep = "\t", header = TRUE, stringsAsFactors = FALSE,
-               na.strings = c("", "NA"))
-  }, error = function(e) {
-    log_error("Failed to read HydroBASINS names: %s", conditionMessage(e), 
-              module = "MODULE4_REPORTS")
-    return(NULL)
-  })
-  
-  # Keep the 5th column (river_name) — the finest level-10 name (see main's loader).
-  base_names <- c("Basin_level", "HYBAS_ID", "Basin_name", "Subbasin_name", "river_name")
-  names(hb_names)[seq_len(min(ncol(hb_names), length(base_names)))] <-
-    base_names[seq_len(min(ncol(hb_names), length(base_names)))]
-  if (!"river_name" %in% names(hb_names)) hb_names$river_name <- NA_character_
-  hb_names$HYBAS_ID <- as.character(hb_names$HYBAS_ID)
-  hb_names$lookup_key_full <- paste0(hb_names$Basin_level, ":", hb_names$HYBAS_ID)
-  hb_names$lookup_key_id <- hb_names$HYBAS_ID
-  
-  log_info("Loaded %d HydroBASINS name mappings.", nrow(hb_names), module = "MODULE4_REPORTS")
-  return(hb_names)
-}
-
-# Helper: Resolve basin names from codes
-resolve_basin_names <- function(basin_codes, hb_lookup) {
-  if (is.null(hb_lookup) || length(basin_codes) == 0) return(basin_codes)
-  
-  sapply(basin_codes, function(code) {
-    if (is.na(code) || !nzchar(code)) return(NA_character_)
-    
-    # Try full format first
-    idx <- match(code, hb_lookup$lookup_key_full)
-    
-    # Fallback to ID only
-    if (is.na(idx)) {
-      if (grepl("^L\\d+:", code)) {
-        id_part <- sub("^L\\d+:", "", code)
-      } else {
-        id_part <- code
-      }
-      idx <- match(id_part, hb_lookup$lookup_key_id)
-    }
-    
-    if (is.na(idx)) return(code)
-    
-    basin <- hb_lookup$Basin_name[idx]
-    subbasin <- hb_lookup$Subbasin_name[idx]
-    level <- hb_lookup$Basin_level[idx]
-    hybas_id <- hb_lookup$HYBAS_ID[idx]
-    
-    if (is.na(basin) || !nzchar(basin)) return(code)
-    
-    if (is.na(subbasin) || !nzchar(subbasin) || basin == subbasin) {
-      return(paste0(basin, " (", level, ":", hybas_id, ")"))
-    } else {
-      return(paste0(basin, " - ", subbasin, " (", level, ":", hybas_id, ")"))
-    }
-  }, USE.NAMES = FALSE)
-}
+# NB this file used to define its own resolve_basin_names(basin_codes, hb_lookup)
+# and load_hydrobasin_names(). Being sourced after 00_helpers.R, the first
+# silently REPLACED the unified basin resolver, and Module 3C's call with
+# `fallback =` then failed ("unused argument"): the first full run of the clean
+# 1.0 died on it (2026-09-23). Both removed; the unified resolver is in
+# 00_helpers.R, the loader in checkcover_main.R.
+# tests/test_single_definitions.R keeps any function from being defined twice.
 
 # Helper: Compute species metrics if missing
 compute_species_metrics <- function(cd) {
@@ -298,7 +238,7 @@ build_reports <- function(result, vernacular_result = NULL, output_dir = "checko
           codes <- unique(na_chr(hydrobasin))
           codes <- codes[nzchar(codes) & !is.na(codes)]
           if (length(codes) > 0 && !is.null(hydrobasin_names)) {
-            named <- resolve_basin_names(codes, hydrobasin_names)
+            named <- resolve_basin_names(codes, hydrobasin_names, fallback = NA_character_)$names
             paste(sort(unique(named)), collapse = " | ")
           } else {
             paste(sort(codes), collapse = " | ")
