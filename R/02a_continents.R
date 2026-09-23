@@ -99,9 +99,7 @@ enrich_with_continents <- function(result, output_dir = "checkover_output",
       if ("continents" %in% names(pts_need)) pts_need$continents <- NULL
 
       log_info("Intersecting %d point(s) with continent polygons...", n_need, module = module)
-      joined <- suppressWarnings(
-        sf::st_join(pts_need, continents_min, join = sf::st_within, left = TRUE)
-      )
+      joined <- robust_join_within(pts_need, continents_min, "continents", module)
       # A point INSIDE a continent polygon is an exact answer and is trusted.
       got      <- canon_continent(joined$continents)
       got_km   <- rep(NA_real_, length(got))
@@ -118,9 +116,9 @@ enrich_with_continents <- function(result, output_dir = "checkover_output",
         log_info("Attempting nearest-continent snap for %d coastal/offshore point(s)...",
                  sum(na_mask), module = module)
         sub <- joined[na_mask, , drop = FALSE]
-        idx <- sf::st_nearest_feature(sub, continents_min)
-        d_km <- as.numeric(sf::st_distance(sub, continents_min[idx, ],
-                                           by_element = TRUE)) / 1000
+        idx <- robust_nearest(sub, continents_min, "continents", module)
+        d_km <- as.numeric(robust_distance(sub, continents_min[idx, ],
+                                           "continents", module)) / 1000
         cand <- canon_continent(continents_min$continents[idx])
 
         # Guard 1 — distance sanity limit.

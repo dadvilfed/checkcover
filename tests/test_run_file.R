@@ -277,6 +277,18 @@ ok(identical(as.integer(c1$code), 1L) && identical(c1$status$status, "failed") &
    "an error during the run exits 1; status.json says failed, with the error message")
 ok(identical(as.integer(c2$code), 2L) && identical(c2$status$status, "refused"),
    "a refusal exits 2; status.json says refused")
+c3 <- run_child("exit_fail_logged", c(
+  'source("R/00_logging.R")',
+  'init_logger(log_dir = CONFIG$service$run_home, log_file = CONFIG$service$log_file)',
+  'enrich_step <- function() join_step()',
+  'join_step <- function() stop("Loop 2 is not valid: Edge 74 is degenerate (duplicate vertex)")',
+  'enrich_step()'))
+rl <- readLines(file.path(home("exit_fail_logged"), "run.log"), warn = FALSE)
+ok(identical(as.integer(c3$code), 1L) &&
+   any(grepl("FATAL: Loop 2 is not valid: Edge 74 is degenerate", rl, fixed = TRUE)) &&
+   any(grepl("Calls: .*enrich_step -> join_step", rl)),
+   "a fatal error is written to run.log, with its call chain (not only to the console)")
+
 ph <- c0$status$phases
 ok(identical(ph$phase, c("ingest", "export")) && ph$seconds[1] >= 0.2 &&
    is.numeric(c0$status$elapsed_seconds) && c0$status$elapsed_seconds >= ph$seconds[1] &&

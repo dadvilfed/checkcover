@@ -137,12 +137,10 @@ enrich_with_gadm <- function(result, output_dir = "checkover_output",
     )
     
     # Only the gap rows are overlaid — everything else keeps its native value.
-    pts_ne <- suppressWarnings(sf::st_join(
+    pts_ne <- robust_join_within(
       result$clean_sf[need_idx, , drop = FALSE],
       ne_countries[, c("iso3_best", "name", "name_long", "geometry")],
-      join = sf::st_within,
-      left = TRUE
-    ))
+      "Natural Earth countries", module)
 
     iso_per_point <- pts_ne$iso3_best
     name_per_point <- ifelse(is.na(pts_ne$name_long), pts_ne$name, pts_ne$name_long)
@@ -224,9 +222,7 @@ enrich_with_gadm <- function(result, output_dir = "checkover_output",
                 if (has_NAME_1) "yes" else "no", module = module)
       
       # Spatial join
-      joined <- suppressWarnings(sf::st_join(
-        pts_iso, gadm_sf, join = sf::st_within, left = TRUE
-      ))
+      joined <- robust_join_within(pts_iso, gadm_sf, paste("GADM", iso), module)
       
       # Optional nearest fallback for admin-1, WITH a distance sanity limit.
       # The point-in-polygon join above is the clean resolution; this snap is a
@@ -240,9 +236,9 @@ enrich_with_gadm <- function(result, output_dir = "checkover_output",
       if (used_level == 1 && has_NAME_1) {
         na_mask <- is.na(joined$NAME_1)
         if (any(na_mask)) {
-          nearest_idx <- sf::st_nearest_feature(joined[na_mask, ], gadm_sf)
-          d_km <- as.numeric(sf::st_distance(joined[na_mask, ], gadm_sf[nearest_idx, ],
-                                             by_element = TRUE)) / 1000
+          nearest_idx <- robust_nearest(joined[na_mask, ], gadm_sf, paste("GADM", iso), module)
+          d_km <- as.numeric(robust_distance(joined[na_mask, ], gadm_sf[nearest_idx, ],
+                                             paste("GADM", iso), module)) / 1000
           within_limit <- !is.na(d_km) & d_km <= GEO_MAX_SNAP_KM
           log_info("Admin-1 snap for %s: %d candidate(s), %d accepted (<=%d km), %d left unresolved.",
                    iso, sum(na_mask), sum(within_limit), GEO_MAX_SNAP_KM,

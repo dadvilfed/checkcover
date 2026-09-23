@@ -92,16 +92,14 @@ enrich_with_teow <- function(result, output_dir = "checkover_output",
     log_info("Intersecting %d points with TEOW polygons...",
              nrow(result$clean_sf), module = module)
     
-    joined <- suppressWarnings(sf::st_join(
-      result$clean_sf, teow_sf, join = sf::st_within, left = TRUE
-    ))
+    joined <- robust_join_within(result$clean_sf, teow_sf, "TEOW", module)
     
     na_mask <- is.na(joined$ecoregion)
     na_n <- sum(na_mask, na.rm = TRUE)
     
     if (na_n > 0 && use_nearest_for_na) {
       log_info("Assigning nearest TEOW polygon for %d points...", na_n, module = module)
-      nearest_idx <- sf::st_nearest_feature(joined[na_mask, ], teow_sf)
+      nearest_idx <- robust_nearest(joined[na_mask, ], teow_sf, "TEOW", module)
       joined$ecoregion[na_mask] <- teow_sf$ecoregion[nearest_idx]
       na_mask <- is.na(joined$ecoregion)
       na_n <- sum(na_mask, na.rm = TRUE)

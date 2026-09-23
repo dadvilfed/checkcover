@@ -150,12 +150,10 @@ enrich_with_wdpa <- function(result, output_dir = "checkover_output",
       dplyr::na_if(ne$adm0_a3, "-99")
     )
     
-    pts_ne <- suppressWarnings(sf::st_join(
+    pts_ne <- robust_join_within(
       result$clean_sf,
       ne[, c("iso3_best", "name", "name_long", "geometry")],
-      join = sf::st_within,
-      left = TRUE
-    ))
+      "Natural Earth countries", module)
     
     iso_vec <- pts_ne$iso3_best
     iso_list <- unique(iso_vec[!is.na(iso_vec) & grepl("^[A-Z]{3}$", iso_vec)])

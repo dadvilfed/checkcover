@@ -301,14 +301,29 @@ enrich_with_hydrobasins_merged <- function(result,
                 sp, lvl, nrow(lyr_small), nrow(lyr), module = module)
       
       
-      basins_matched <- try(sf::st_filter(lyr_small, sp_pts), silent=TRUE)
-      
-      if (inherits(basins_matched, "try-error") || nrow(basins_matched) == 0) {
+      # Robust against rings the spherical engine refuses, which the crop above
+      # can create (see robust_spatial_op() in 00_spatial_sanitize.R). These
+      # steps used to sit in silent try()s: on an error every record of the
+      # taxon was left unassigned, and only the LOW ASSIGNMENT count below
+      # hinted at it. A step that fails even on the planar engine is now logged
+      # with its error.
+      hb_layer <- sprintf("HydroBASINS L%s [%s]", lvl, sp)
+      .hb_fail <- function(step) function(e) {
+        log_error("  [%s] HydroBASINS L%s %s failed on every engine: %s. Its records stay unassigned.",
+                  sp, lvl, step, conditionMessage(e), module = module)
+        e
+      }
+      basins_matched <- tryCatch(robust_filter(lyr_small, sp_pts, hb_layer, module),
+                                 error = .hb_fail("basin lookup"))
+      lookup_failed <- inherits(basins_matched, "error")
+
+      if (lookup_failed || nrow(basins_matched) == 0) {
         labels <- rep(NA_character_, nrow(sp_pts))
       } else {
-        ix <- try(sf::st_intersects(sp_pts, basins_matched), silent=TRUE)
-        
-        if (inherits(ix, "try-error")) {
+        ix <- tryCatch(robust_intersects(sp_pts, basins_matched, hb_layer, module),
+                       error = .hb_fail("intersection"))
+
+        if (inherits(ix, "error")) {
           labels <- rep(NA_character_, nrow(sp_pts))
         } else {
           labels <- character(nrow(sp_pts))
@@ -325,18 +340,22 @@ enrich_with_hydrobasins_merged <- function(result,
         }
       }
       
-      if (nearest_fallback && any(is.na(labels)) && 
-          !inherits(basins_matched, "try-error") && nrow(basins_matched) > 0) {
+      if (nearest_fallback && any(is.na(labels)) &&
+          !lookup_failed && nrow(basins_matched) > 0) {
         miss <- which(is.na(labels))
-        nn <- sf::st_nearest_feature(sp_pts[miss,], basins_matched)
-        
-        dists <- sf::st_distance(sp_pts[miss,], basins_matched[nn,], by_element=TRUE)
-        valid_nn <- as.numeric(dists) <= (NEAREST_MAX_KM * 1000)
-        
-        if (any(valid_nn)) {
-          nearest_ids <- basins_matched$HB_LABEL[nn[valid_nn]]
-          nearest_ids_with_level <- paste0("L", lvl, ":", nearest_ids)
-          labels[miss[valid_nn]] <- nearest_ids_with_level
+        snap <- tryCatch({
+          nn <- robust_nearest(sp_pts[miss,], basins_matched, hb_layer, module)
+          dists <- robust_distance(sp_pts[miss,], basins_matched[nn,], hb_layer, module)
+          list(nn = nn, dists = dists)
+        }, error = .hb_fail("nearest-basin snap"))
+
+        if (!inherits(snap, "error")) {
+          valid_nn <- as.numeric(snap$dists) <= (NEAREST_MAX_KM * 1000)
+          if (any(valid_nn)) {
+            nearest_ids <- basins_matched$HB_LABEL[snap$nn[valid_nn]]
+            nearest_ids_with_level <- paste0("L", lvl, ":", nearest_ids)
+            labels[miss[valid_nn]] <- nearest_ids_with_level
+          }
         }
       }
       

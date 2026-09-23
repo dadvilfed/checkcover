@@ -215,8 +215,9 @@ enrich_with_feow <- function(result, output_dir = "checkover_output",
     
     log_info("Intersecting %d points with FEOW polygons...", nrow(result$clean_sf), module = module)
     
-    joined <- suppressWarnings(sf::st_join(
-      result$clean_sf, feow_min, join = sf::st_within, left = TRUE))
+    # Robust: a crop to a narrow bounding box can leave a ring the spherical
+    # engine refuses (see robust_spatial_op() in 00_spatial_sanitize.R).
+    joined <- robust_join_within(result$clean_sf, feow_min, "FEOW", module)
     
     # Sanitize-side effect: wrap_dateline can produce MULTIPOLYGONs with
     # parts on both sides of +-180. A point lying in an ambiguous coastal
@@ -246,7 +247,7 @@ enrich_with_feow <- function(result, output_dir = "checkover_output",
     
     if (na_n > 0 && use_nearest_for_na) {
       log_info("Assigning nearest FEOW polygon for %d points...", na_n, module = module)
-      nearest_idx <- sf::st_nearest_feature(joined[na_mask, ], feow_min)
+      nearest_idx <- robust_nearest(joined[na_mask, ], feow_min, "FEOW", module)
       joined$freshwater_ecoregion[na_mask] <- feow_min$freshwater_ecoregion[nearest_idx]
       na_mask <- is.na(joined$freshwater_ecoregion)
       na_n <- sum(na_mask, na.rm = TRUE)

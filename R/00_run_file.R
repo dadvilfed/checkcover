@@ -330,8 +330,30 @@ install_exit_handler <- function() {
     refused <- isTRUE(.CHECKOVER_EXIT$refused)
     cfg <- if (exists("CONFIG", envir = globalenv())) get("CONFIG", envir = globalenv()) else list()
     if (!refused) {
-      # "Error in f(x) : msg" / "Error: msg" -> "msg"
-      msg <- sub("^Error: ", "", sub("^Error in .*? : ", "", trimws(geterrmessage()), perl = TRUE))
+      # One clean line: "Error in f(x) : msg" / "Error: msg" -> "msg". A long
+      # message starts on the line after "Error in f(x) :", and Rscript
+      # appends its own "Calls: ..." line; both are removed.
+      msg <- geterrmessage()
+      msg <- sub("^Error(?: in [^\n]*?)? ?:\\s*", "", msg, perl = TRUE)
+      msg <- sub("(?s)\\s*\\nCalls: .*$", "", msg, perl = TRUE)
+      msg <- trimws(gsub("\\s*\\n\\s*", " ", msg))
+      # Into run.log too, with the call chain: R prints a fatal error only on
+      # the console, so the log of a failed run used to just stop (the first
+      # single-taxon trial, 2026-09-23). The runner tails run.log.
+      calls <- vapply(utils::head(sys.calls(), -1L), function(cl) {
+        f <- cl[[1]]
+        if (is.name(f)) as.character(f) else paste(deparse(f, width.cutoff = 60L), collapse = "")
+      }, character(1))
+      calls <- calls[!calls %in% c("tryCatch", "tryCatchList", "tryCatchOne", "doTryCatch",
+                                   "withCallingHandlers", "with_log_section", "force",
+                                   "suppressWarnings", "suppressMessages", "local", "eval",
+                                   "withVisible", "source", "stop", "(function() {")]
+      if (exists("log_error", mode = "function")) {
+        try(log_error("FATAL: %s", msg, module = "MAIN"), silent = TRUE)
+        if (length(calls))
+          try(log_error("  Calls: %s", paste(utils::tail(calls, 12L), collapse = " -> "),
+                        module = "MAIN"), silent = TRUE)
+      }
       write_run_status(cfg, "failed", msg)
     }
     quit(save = "no", status = if (refused) 2L else 1L, runLast = FALSE)

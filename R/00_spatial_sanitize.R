@@ -335,3 +335,89 @@ normalize_antimeridian_rings <- function(x,
   attr(x, "n_rings_normalized") <- n_fixed
   x
 }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Point-in-polygon operations that survive polygons the spherical engine refuses
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# sf runs operations on longitude/latitude data on the s2 spherical engine,
+# which refuses polygons that GEOS accepts: a ring with a repeated vertex
+# ("Loop 2 is not valid: Edge 74 is degenerate (duplicate vertex)"), a ring
+# touching itself. Cropping a layer to the records' bounding box can produce
+# exactly such rings. The first single-taxon trial run died on it in the FEOW
+# join (A. fulcisianus, narrow bounding box, 2026-09-23), and single-taxon runs
+# are what the service mostly does. HydroBASINS had the same exposure, but
+# silently: a failed intersection left every record of the taxon unassigned.
+#
+# Each operation runs as it always has. Only if it fails are the polygons
+# repaired (st_make_valid) and the operation retried; if it still fails, it runs
+# on the planar GEOS engine. Both fallbacks are logged with the error, so the log
+# says when and why a layer needed them. When the first attempt succeeds, the
+# result is exactly what the plain sf call returns.
+
+.rs_log <- function(level, fmt, ..., module) {
+  f <- paste0("log_", level)
+  if (exists(f, mode = "function")) get(f)(fmt, ..., module = module)
+  else message(sprintf(fmt, ...))
+}
+
+#' Repair polygons for the spherical engine; the row count and order are kept.
+repair_polygons <- function(polys) {
+  out <- tryCatch(suppressWarnings(sf::st_make_valid(polys)), error = function(e) NULL)
+  if (is.null(out)) {
+    old <- sf::sf_use_s2(FALSE)
+    on.exit(sf::sf_use_s2(old), add = TRUE)
+    out <- tryCatch(suppressWarnings(sf::st_make_valid(polys)), error = function(e) polys)
+  }
+  out
+}
+
+#' Run op(polys); on failure repair the polygons, then fall back to planar.
+#' An error that survives all three attempts is raised, with its own message.
+robust_spatial_op <- function(op, polys, what, layer_name = "layer", module = "SPATIAL") {
+  first <- tryCatch(suppressWarnings(op(polys)), error = function(e) e)
+  if (!inherits(first, "error")) return(first)
+  .rs_log("warn", "%s (%s): failed on the spherical engine: %s. Repairing the polygons and retrying.",
+          layer_name, what, conditionMessage(first), module = module)
+
+  fixed  <- repair_polygons(polys)
+  second <- tryCatch(suppressWarnings(op(fixed)), error = function(e) e)
+  if (!inherits(second, "error")) return(second)
+  .rs_log("warn", "%s (%s): still failing after repair: %s. Running this step on the planar engine.",
+          layer_name, what, conditionMessage(second), module = module)
+
+  old <- sf::sf_use_s2(FALSE)
+  on.exit(sf::sf_use_s2(old), add = TRUE)
+  suppressWarnings(op(fixed))
+}
+
+#' st_join(points, polys, join = st_within, left = TRUE), robustly.
+robust_join_within <- function(points, polys, layer_name = "layer", module = "SPATIAL") {
+  robust_spatial_op(function(p) sf::st_join(points, p, join = sf::st_within, left = TRUE),
+                    polys, "point-in-polygon join", layer_name, module)
+}
+
+#' st_intersects(points, polys), robustly (indices refer to the rows of polys).
+robust_intersects <- function(points, polys, layer_name = "layer", module = "SPATIAL") {
+  robust_spatial_op(function(p) sf::st_intersects(points, p),
+                    polys, "intersection", layer_name, module)
+}
+
+#' st_filter(polys, points), robustly.
+robust_filter <- function(polys, points, layer_name = "layer", module = "SPATIAL") {
+  robust_spatial_op(function(p) sf::st_filter(p, points),
+                    polys, "filter", layer_name, module)
+}
+
+#' st_nearest_feature(points, polys), robustly (indices refer to rows of polys).
+robust_nearest <- function(points, polys, layer_name = "layer", module = "SPATIAL") {
+  robust_spatial_op(function(p) sf::st_nearest_feature(points, p),
+                    polys, "nearest polygon", layer_name, module)
+}
+
+#' st_distance(points, polys, by_element = TRUE), robustly: point i to polygon i.
+robust_distance <- function(points, polys, layer_name = "layer", module = "SPATIAL") {
+  robust_spatial_op(function(p) sf::st_distance(points, p, by_element = TRUE),
+                    polys, "distance", layer_name, module)
+}
