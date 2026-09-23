@@ -386,7 +386,7 @@ taxon's package stays in its `source_version` folder.
 | `source_version` | the revision whose folder holds this taxon's package; `null` for `deferred_new` (no package) |
 | `prior_source_version` | where the package lived before this revision; `null` for a first appearance |
 | `fingerprint` | the current data |
-| `fingerprint_at_source` | the data the package was built from. It equals `fingerprint`, except for `deferred`, where the next run compares against it |
+| `fingerprint_at_source` | the data the package was built from. It equals `fingerprint`, except for `deferred`, where the next run compares against it, and `deferred_new`, where it is `null` (there is no package) |
 | `n_records` | records of the taxon after cleaning |
 | `change_summary` | human-readable reason, e.g. `identical to v1.9 (812 records)`, `forced reprocess (…)`, `deferred: data changed vs v1.0 (…); not in this run's species_scope` |
 
