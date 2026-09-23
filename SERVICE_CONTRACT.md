@@ -101,12 +101,27 @@ input. A taxon missing from the input would be missing from the revision.
 | Header | first line; names are case-sensitive |
 | Quoting | none: a `"` is an ordinary character. No field may contain a tab or a line break |
 | Line endings | LF or CRLF |
-| Encoding | UTF-8 (without BOM). Windows-1252 bytes are repaired with a warning; do not rely on it |
+| Encoding | UTF-8, without BOM. A service run **refuses** anything else (exit 2); a run by hand warns and decodes Windows-1252. See below |
 | Missing value | an empty field, `NA` or `N/A`. The literal text `NA` in any field is read as missing |
 | Decimal separator | a point. Coordinates also accept a comma (`46,63824`). No thousands separators |
 | File name | must end in `.tsv` |
 | Extra columns | ignored |
 | A column named twice | the first is used, with a warning |
+
+**The file as WoC writes it, never re-saved.** The fingerprints compare text
+exactly, so the file must reach the run folder byte for byte as WoC's builder
+wrote it. A spreadsheet re-save changes the text of many records without any
+error. The emailed export of 2026-09-23 had been saved that way:
+
+- Windows-1252 instead of UTF-8, with letters that encoding lacks turned into
+  `?` (`S?laj`, `Mehedin?i`);
+- 2,536 fields wrapped in quotes, their inner quotes doubled.
+
+On that file, 86 of 680 taxa read differently from the UTF-8 export of the same
+records. A revision built from it would print the broken text. At the first
+clean delivery, those taxa would then read `changed` without any change in
+WoC. The encoding is the part the preflight can detect, so a service run
+refuses a file that is not UTF-8, or that starts with a byte-order mark.
 
 **Columns.** Either the Darwin Core header or the legacy WoC header is
 accepted for each column.

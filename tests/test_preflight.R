@@ -121,6 +121,31 @@ res7 <- quiet(preflight_check(mk(input_file = legacy), strict = FALSE))
 ok(!any(grepl("input column", res7$item)),
    "legacy WoC column names satisfy the column check")
 
+# ---- input encoding: UTF-8 without a BOM (SERVICE_CONTRACT section 2) ----
+enc_file <- function(name, bytes) {
+  p <- file.path(tmp, name); writeBin(bytes, p); p
+}
+hdr   <- charToRaw("scientificName\tdecimalLatitude\tdecimalLongitude\tyear\testablishmentMeans\n")
+row_a <- charToRaw("Astacus astacus\t46\t22\t2020\tindigenous\n")
+utf8  <- enc_file("utf8.tsv", c(hdr, row_a, charToRaw(enc2utf8("Sălaj\t46\t22\t2020\tindigenous\n"))))
+cp    <- enc_file("cp1252.tsv", c(hdr, row_a, charToRaw("Smith"), as.raw(0x92),
+                                  charToRaw("s\t46\t22\t2020\tindigenous\n")))
+bom   <- enc_file("bom.tsv", c(as.raw(c(0xef, 0xbb, 0xbf)), hdr, row_a))
+enc_items <- function(r) r[r$item == "input_file encoding", , drop = FALSE]
+ok(nrow(check_input_encoding(list(input_file = utf8))) == 0,
+   "a UTF-8 input with non-ASCII letters passes the encoding check")
+e_hand <- check_input_encoding(list(input_file = cp))
+ok(nrow(e_hand) == 1 && e_hand$severity == "WARNING" && grepl("1 of 3 lines", e_hand$detail),
+   "a Windows-1252 input is a WARNING by hand, and counts the lines")
+e_serv <- check_input_encoding(list(input_file = cp, service = list(run_id = "t")))
+ok(nrow(e_serv) == 1 && e_serv$severity == "FATAL",
+   "a Windows-1252 input is refused in a service run")
+e_bom <- check_input_encoding(list(input_file = bom, service = list(run_id = "t")))
+ok(nrow(e_bom) == 1 && e_bom$severity == "FATAL" && grepl("byte-order mark", e_bom$detail),
+   "a byte-order mark is refused in a service run")
+res_enc <- quiet(preflight_check(mk(input_file = cp), strict = FALSE))
+ok(nrow(enc_items(res_enc)) == 1, "preflight_check() reports the encoding finding")
+
 # ---- strict mode stops; non-strict returns ----
 threw <- inherits(try(quiet(preflight_check(mk(), strict = TRUE)), silent = TRUE),
                   "try-error")

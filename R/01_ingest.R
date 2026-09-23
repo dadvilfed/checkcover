@@ -69,13 +69,19 @@ fix_utf8_encoding <- function(data, module = "MODULE1_INGEST") {
     # Strategy: Try to ensure valid UTF-8 by converting from Latin1 if needed
     # This handles Windows-1252 and other common encodings
     fixed_col <- tryCatch({
-      # Repair ELEMENT-WISE, not column-wise. The WoC export is Latin-1 for its
-      # non-ASCII characters (county "Baden-Wurttemberg", contributor
-      # "Parvulescu"), but a column can legitimately mix already-valid UTF-8 with
-      # Latin-1 rows. Converting the whole column from latin1 would double-encode
+      # Repair ELEMENT-WISE, not column-wise. The emailed WoC export is
+      # Windows-1252 for its non-ASCII characters (county "Baden-Wurttemberg",
+      # contributor "Parvulescu"), but a column can legitimately mix already-valid
+      # UTF-8 with such rows. Converting the whole column would double-encode
       # the valid rows into mojibake and destroy exactly the diacritics the WoC
       # names are curated for. So: leave valid UTF-8 alone, convert only the
       # invalid elements.
+      # Windows-1252, not latin1: the two agree from 0xA0 up, but 0x80-0x9F are
+      # typographic punctuation in 1252 (0x92 ’, 0x96 –) and invisible control
+      # characters in latin1. The 2026-09-23 export has them in 17,386 records
+      # of 140 taxa, mostly citations; read as latin1, every such apostrophe
+      # and dash vanished from the packages, and the text fingerprinted
+      # differently from the UTF-8 export of the same records.
       valid <- stringi::stri_enc_isutf8(original_col)
       needs_fix <- !valid & !is.na(original_col)
       if (!any(needs_fix)) {
@@ -83,7 +89,7 @@ fix_utf8_encoding <- function(data, module = "MODULE1_INGEST") {
       } else {
         out <- original_col
         out[needs_fix] <- stringi::stri_encode(original_col[needs_fix],
-                                               from = "latin1", to = "UTF-8")
+                                               from = "windows-1252", to = "UTF-8")
         # Anything still invalid gets a permissive 8-bit fallback.
         still_bad <- !stringi::stri_enc_isutf8(out) & !is.na(out)
         if (any(still_bad)) {

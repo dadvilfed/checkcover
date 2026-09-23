@@ -236,8 +236,28 @@ computed them changed.
    mkdir -p /data/output /data/state
    cp -a /data/state_old_series/cache /data/state/   # reference layers only; optional
    ```
-3. Run `1.0` with no `species_scope`, and with `"force_reprocess": false`:
-   with no prior revision, every taxon is `new`.
+3. **1.0 is a baseline, run by hand** (Lucian, 2026-09-23). Its input is the
+   full cohort with every extinction claim cleared, and nothing else changed.
+   So every claimed site is still an ordinary presence in 1.0, and 1.1 has a
+   range to take it out of.
+   ```bash
+   mkdir -p /data/runs/<run_id>
+   tools/clear_extinction_claims.sh <export>.tsv /data/runs/<run_id>/input.tsv
+   ```
+   The script prints the records, the claims it cleared and the taxa they
+   belong to. It then checks that every other column is byte-identical to the
+   export. Never clear the column in a spreadsheet: a re-save re-encodes the
+   file (SERVICE_CONTRACT section 2).
+   - The export must be the file WoC's builder writes: UTF-8 and never
+     re-saved. 1.0 is what every later revision compares with, so a byte that
+     differs from later deliveries reads as a change forever after.
+   - Run it exactly as section 3 does: same `run.json`, same volumes, same
+     image. The runner finds it there as its predecessor.
+   - No `species_scope`; with no prior revision, every taxon is `new`.
+4. **1.1** reads the same export as it is, claims included. Only the taxa with
+   a claim read `changed`: on the 2026-09-23 export, 201 claims in 19 taxa.
+   Every other taxon keeps its 1.0 package. The 1.0 → 1.1 temporal delta is then
+   exactly what the claims take away. From 1.1 on, revisions are the runner's.
 
 The preflight refuses a state dir whose `temporal/` has history but whose output
 root has no revisions, so the old history cannot leak into the new series by

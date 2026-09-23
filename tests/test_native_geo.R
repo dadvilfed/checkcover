@@ -76,6 +76,16 @@ ok("ASCII untouched",              identical(fixed[1], "Bihor"))
 ok("NA preserved",                 is.na(fixed[4]))
 ok("all output valid UTF-8",       all(stringi::stri_enc_isutf8(na.omit(fixed))))
 
+# The export is Windows-1252, not latin1: 0x92 and 0x96 are ’ and –, which
+# latin1 turns into invisible control characters (2026-09-23 export: 17,386
+# records, mostly citations).
+cite <- rawToChar(as.raw(c(0x53, 0x6d, 0x69, 0x74, 0x68, 0x92, 0x73, 0x20,   # Smith's
+                           0x31, 0x39, 0x39, 0x30, 0x96, 0x31, 0x39, 0x39, 0x35)))  # 1990-1995
+fixed <- fix_utf8_encoding(data.frame(citation = cite, stringsAsFactors = FALSE))$citation
+ok("0x92 decodes to a right single quote", grepl("’", fixed, fixed = TRUE))
+ok("0x96 decodes to an en dash",           grepl("–", fixed, fixed = TRUE))
+ok("no C1 control characters",             !grepl("[\u0080-\u009f]", fixed))
+
 # ── 5. Sanity gate on native geography (column-shift defence) ───────────────
 # A delimiter inside a text field shifts every later column by one, so
 # `continent` can hold the contributor's name, `country` the continent and

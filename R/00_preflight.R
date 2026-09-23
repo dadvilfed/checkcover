@@ -143,6 +143,10 @@ preflight_check <- function(config = NULL, strict = TRUE, module = "PREFLIGHT") 
     }
   }
 
+  # ── 7. Input encoding ─────────────────────────────────────────────────────
+  enc <- check_input_encoding(config)
+  for (i in seq_len(nrow(enc))) add(enc$severity[i], enc$item[i], enc$detail[i])
+
   res <- if (length(findings)) do.call(rbind, findings) else
     data.frame(severity = character(), item = character(), detail = character())
 
@@ -358,6 +362,55 @@ check_version_number <- function(config) {
     if (skipped) add("WARNING", "framework_version", sprintf(
       "%s skips numbers after the latest revision %s; the series normally has no gaps.",
       fv, latest))
+  }
+  done()
+}
+
+#' The input's encoding: UTF-8 without a byte-order mark (SERVICE_CONTRACT.md,
+#' section 2).
+#'
+#' The emailed WoC export of 2026-09-23 was Windows-1252. Letters that encoding
+#' lacks (Ș, ț, ă, ł, ś ...) arrived as '?' ("S?laj", "Mehedin?i"), and its
+#' text fingerprints differently from the UTF-8 export of the same records. A
+#' revision built from it prints the broken names, and at the first UTF-8
+#' delivery every taxon carrying such text reads "changed". A service run
+#' refuses such a file; a run by hand warns (ingest decodes it as Windows-1252,
+#' and what became '?' stays lost).
+#'
+#' @return A data frame of findings (severity, item, detail), possibly empty.
+check_input_encoding <- function(config) {
+  f <- list()
+  add <- function(severity, item, detail) {
+    f[[length(f) + 1L]] <<- data.frame(severity = severity, item = item,
+                                       detail = detail, stringsAsFactors = FALSE)
+  }
+  done <- function() {
+    if (length(f)) do.call(rbind, f) else
+      data.frame(severity = character(), item = character(), detail = character(),
+                 stringsAsFactors = FALSE)
+  }
+  path <- config$input_file
+  if (is.null(path) || !nzchar(path) || !file.exists(path)) return(done())
+  if (!tolower(tools::file_ext(path)) %in% c("tsv", "csv", "txt")) return(done())
+  sev <- if (!is.null(config$service)) "FATAL" else "WARNING"
+
+  if (identical(readBin(path, "raw", 3L), as.raw(c(0xef, 0xbb, 0xbf)))) {
+    add(sev, "input_file encoding", sprintf(paste0(
+      "'%s' starts with a byte-order mark. The first column's name then carries ",
+      "it and is not recognised. Write UTF-8 without a BOM."), path))
+  }
+  lines <- readLines(path, encoding = "bytes", warn = FALSE)
+  bad <- sum(!validUTF8(lines))
+  if (bad > 0L) {
+    add(sev, "input_file encoding", sprintf(paste0(
+      "'%s' is not UTF-8: %d of %d lines hold bytes that are not valid UTF-8 ",
+      "(Windows-1252 text, most likely). Letters that encoding lacks arrive as ",
+      "'?' and stay lost, and the text fingerprints differently from the UTF-8 ",
+      "export of the same records, so every taxon holding such text would read ",
+      "\"changed\" at the next UTF-8 delivery. %s"),
+      path, bad, length(lines),
+      if (sev == "FATAL") "The service takes UTF-8 only: ask WoC for the UTF-8 export."
+      else "It will be decoded as Windows-1252."))
   }
   done()
 }

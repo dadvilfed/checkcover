@@ -409,6 +409,11 @@ whole configuration, exactly as for a manual run.
 - `species_scope` and `force_reprocess` list taxa by **package id**
   (`Astacus_astacus`), the manifest's keys. A display name, or an id that
   matches no taxon in the input, is refused with every such entry listed.
+- The input must be UTF-8 without a byte-order mark, as WoC writes it; a
+  service run refuses anything else. A spreadsheet re-save turns it into
+  Windows-1252, loses the letters that encoding lacks, and changes the
+  fingerprints of the records it touches. A run by hand only warns, and
+  decodes Windows-1252.
 
 The full interface — run file, input table, what counts as a change, exit
 codes, and the schemas of every file a platform reads — is specified in
