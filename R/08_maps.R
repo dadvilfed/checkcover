@@ -614,7 +614,12 @@ generate_all_maps <- function(scenario_table,
 .write_styled_kml <- function(sf_obj, file_path, layer_name, color, opacity) {
   tmp <- tempfile(fileext = ".kml")
   sf_obj$kml_id <- seq_len(nrow(sf_obj))
-  sf::st_write(sf_obj, tmp, driver = "KML", quiet = TRUE, delete_dsn = TRUE)
+  # `layer` fixed to the target's name: left to default, st_write names the KML
+  # Schema/Folder after the random temp file ("file4d2a..."), so two runs of the
+  # same data never gave the same bytes (found in the host-vs-container
+  # comparison of the clean 1.0 demo, 2026-09-23).
+  sf::st_write(sf_obj, tmp, layer = tools::file_path_sans_ext(basename(file_path)),
+               driver = "KML", quiet = TRUE, delete_dsn = TRUE)
   kml_txt <- paste(readLines(tmp), collapse = "\n")
   
   # Convert color to KML format (AABBGGRR)
@@ -649,7 +654,9 @@ generate_all_maps <- function(scenario_table,
 # --- HELPER: WRITE BASINS KML (with population-based styling) ---
 .write_basins_kml <- function(basins_sf, file_path) {
   tmp <- tempfile(fileext = ".kml")
-  sf::st_write(basins_sf, tmp, driver = "KML", quiet = TRUE, delete_dsn = TRUE)
+  # Fixed layer name, not the random temp file's (see .write_styled_kml).
+  sf::st_write(basins_sf, tmp, layer = tools::file_path_sans_ext(basename(file_path)),
+               driver = "KML", quiet = TRUE, delete_dsn = TRUE)
   kml_txt <- paste(readLines(tmp), collapse = "\n")
   
   # Define styles for each status

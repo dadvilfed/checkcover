@@ -252,8 +252,14 @@ serve as manuscript supplements, hence the prefixed filenames — set
 
 A 519-record, 4-species extract from the Ponto-Caspian crayfish data ships in
 `demo_data/WoC_demo_Pontastacus.tsv` (all records are `confidentialityLevel 0`,
-i.e. public). It exercises every branch — both population streams, a type
-locality, an extinction claim — and runs in minutes.
+i.e. public). It exercises both population streams, a type locality, a
+widespread taxon and one with too few records for an EOO. It holds no
+extinction claim, so every record comes out `active`.
+
+It is small in records, not in time: the reference layers are loaded in full
+whatever the number of taxa. On the UVT server (2026-09-22) it took about 90
+minutes and peaked at 16 GB of RAM, two thirds of it HydroBASINS (about half an
+hour per population stream) and a fifth WDPA, with a warm reference cache.
 
 ```r
 CONFIG$input_file        <- "demo_data/WoC_demo_Pontastacus.tsv"
@@ -612,7 +618,7 @@ Rscript tests/run_all.R                              # unit + regression suite
 Rscript tests/audit_packages.R checkover_output/1.0  # per-package integrity
 ```
 
-**`tests/run_all.R`** — every `tests/test_*.R` (34 at present), covering the
+**`tests/run_all.R`** — every `tests/test_*.R` (35 at present), covering the
 classifier, extinction handling, the geographic fallback, vocabulary, Darwin
 Core mapping, fingerprinting, species scope, service mode, revision numbering,
 the citation, basin resolution, narrative consistency and the coordinate-free
