@@ -135,7 +135,18 @@ for (f in differ) {
   say("- `%s`: %d line(s) differ%s", f, length(d),
       if (length(vol)) sprintf(", %d of them only in dates", length(vol)) else "")
   if (!in_maps) for (i in head(real, 5)) say("    - line %d: `%s` vs `%s`", i, short(la[i]), short(lb[i]))
-  if (in_maps && length(real)) say("    - %d line(s) differ in more than dates (map lines are not printed)", length(real))
+  if (in_maps && length(real)) {
+    # Map lines can hold coordinates, so they are shown with every digit
+    # masked: the SHAPE of the difference (a tag, an attribute, the number of
+    # decimals) is visible, a location is not.
+    digits_only <- real[gsub("[0-9]", "#", la[real]) == gsub("[0-9]", "#", lb[real])]
+    say("    - %d line(s) differ in more than dates; %d of them only in digits (map lines shown with digits masked)",
+        length(real), length(digits_only))
+    for (i in head(setdiff(real, digits_only), 3))
+      say("    - line %d: `%s` vs `%s`", i, short(gsub("[0-9]", "#", la[i]), 110), short(gsub("[0-9]", "#", lb[i]), 110))
+    for (i in head(digits_only, 2))
+      say("    - line %d (digits only): `%s` vs `%s`", i, short(gsub("[0-9]", "#", la[i]), 110), short(gsub("[0-9]", "#", lb[i]), 110))
+  }
   if (length(real)) substantive <- c(substantive, f) else expected_only <- c(expected_only, f)
 }
 
