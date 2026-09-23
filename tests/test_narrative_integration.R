@@ -80,6 +80,43 @@ cat(sprintf("[test_narrative_integration] consistency mismatches: %d ; integrity
 for (sp in names(cons$mismatches))  for (p in cons$mismatches[[sp]]) cat("  cons* ", p, "\n")
 for (sp in names(integ$flags))      for (p in integ$flags[[sp]])     cat("  integ*", p, "\n")
 
-fail <- cons$n_mismatched > 0 || integ$n_flagged > 0
+# ---- fewer basin NAMES than basin UNITS ----
+# Two HydroBASINS units that resolve to one name: the narrative prints
+# "**1 hydrographic basin** ... (across 2 HydroBASINS units)". The audit must
+# compare the UNIT count with basins_count. Until 2026-09-23 it read the name
+# count, and the first clean 1.0 demo failed its audit on exactly this (3 of 4
+# species); the fixture above has as many names as units, so nothing caught it.
+hb_lookup <- data.frame(Basin_level = "L8", HYBAS_ID = c("1", "2"), Basin_name = "Danube",
+                        Subbasin_name = "Tisza", river_name = NA_character_, stringsAsFactors = FALSE)
+ind_report2 <- ind_report
+ind_report2$counts$n_named_basins <- 1L   # as Module 3C counts them: one resolved name
+can2 <- .build_canonical_narrative(
+  sp = "Testus astacus", scenario = 1, vern_str = "rac de râu(ron) | noble crayfish",
+  sp_ind = sp_ind, sp_nind = NULL, ind_report = ind_report2, nind_report = NULL,
+  iso_lang = iso, feow_map = NULL, hydrobasin_names = hb_lookup,
+  checkover_version = "1.1", output_version = "v1.1",
+  snapshot_date = "2026-07-11", prev_reports_dir = NULL,
+  sp_clean = "Testus_astacus", module = "TEST", ctx = NULL
+)
+tmp2 <- file.path(tempdir(), "auditpkg_it2"); unlink(tmp2, recursive = TRUE)
+d2 <- file.path(tmp2, "Testus_astacus"); dir.create(file.path(d2, "narratives"), recursive = TRUE)
+writeLines(can2$full_markdown, file.path(d2, "narratives", "Testus_astacus_canonical.md"), useBytes = TRUE)
+writeLines(can2$formal_narrative_text, file.path(d2, "narratives", "Testus_astacus_narrative.txt"), useBytes = TRUE)
+jsonlite::write_json(pkg_meta, file.path(d2, "package_metadata.json"), pretty = TRUE, auto_unbox = TRUE, na = "null")
+
+names_lt_units <- grepl("Distinct names: 1  |  HydroBASINS units: 2", can2$full_markdown, fixed = TRUE) &&
+                  grepl("**1 hydrographic basin**", can2$formal_narrative_text, fixed = TRUE) &&
+                  grepl("(across 2 HydroBASINS units)", can2$formal_narrative_text, fixed = TRUE)
+cons2 <- audit_narrative_metadata_consistency(tmp2)
+pkg_meta_bad <- pkg_meta; pkg_meta_bad$metrics$indigenous$basins_count <- 3L
+jsonlite::write_json(pkg_meta_bad, file.path(d2, "package_metadata.json"), pretty = TRUE, auto_unbox = TRUE, na = "null")
+cons3 <- audit_narrative_metadata_consistency(tmp2)
+cat(sprintf("[test_narrative_integration] 1 name / 2 units: fixture %s, audit mismatches %d (expect 0); wrong unit count flagged %d time(s) (expect 2)\n",
+            if (names_lt_units) "as intended" else "NOT AS INTENDED", cons2$n_mismatched,
+            length(unlist(cons3$mismatches))))
+for (sp in names(cons2$mismatches)) for (p in cons2$mismatches[[sp]]) cat("  cons2* ", p, "\n")
+
+fail <- cons$n_mismatched > 0 || integ$n_flagged > 0 ||
+        !names_lt_units || cons2$n_mismatched > 0 || length(unlist(cons3$mismatches)) != 2L
 cat(sprintf("[test_narrative_integration] %s\n", if (fail) "FAIL" else "PASS"))
 quit(status = if (fail) 1 else 0)

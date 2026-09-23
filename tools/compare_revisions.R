@@ -40,6 +40,15 @@ VOLATILE_KEYS <- c("generated", "generated_date", "generated_utc", "generated_at
                    "date-released", "timestamp", "script_run_time")
 VOLATILE_LINE <- "(Generated|generated|date-released|version: \"[0-9]{4}-|[0-9]{4}-[0-9]{2}-[0-9]{2})"
 
+# Dates and timestamps replaced by a placeholder. Two values or lines that are
+# equal once masked differ only in when they were written, which two runs of
+# the same revision on different days always do. Proven per value, not assumed.
+mask_dates <- function(s) {
+  s <- gsub("[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9]{2}:[0-9]{2}(:[0-9]{2})?(\\.[0-9]+)?(Z|[+-][0-9]{2}:?[0-9]{2})?)?",
+            "<date>", s, perl = TRUE)
+  gsub("[0-9]{8}_[0-9]{6}", "<stamp>", s, perl = TRUE)
+}
+
 rel_files <- function(d) sort(list.files(d, recursive = TRUE, all.files = TRUE, no.. = TRUE))
 fa <- rel_files(A); fb <- rel_files(B)
 only_a <- setdiff(fa, fb); only_b <- setdiff(fb, fa); both <- intersect(fa, fb)
@@ -103,9 +112,11 @@ for (f in differ) {
     is_diff <- is.na(va) | is.na(vb) | va != vb
     is_diff[is.na(is_diff)] <- TRUE
     dk <- keys[is_diff]
-    vol <- dk[leaf(dk) %in% VOLATILE_KEYS]; real <- setdiff(dk, vol)
+    only_dates <- dk[!is.na(ja[dk]) & !is.na(jb[dk]) & mask_dates(ja[dk]) == mask_dates(jb[dk])]
+    vol <- unique(c(dk[leaf(dk) %in% VOLATILE_KEYS], only_dates)); real <- setdiff(dk, vol)
     say("- `%s`: %d key(s) differ%s", f, length(dk),
-        if (length(vol)) sprintf(", %d of them expected (%s)", length(vol), paste(unique(leaf(vol)), collapse = ", ")) else "")
+        if (length(vol)) sprintf(", %d of them only in dates/run identity (%s)", length(vol),
+                                 paste(unique(leaf(vol)), collapse = ", ")) else "")
     for (k in head(real, 12)) say("    - `%s`: `%s` vs `%s`", k, short(ja[k] %||% "(absent)"), short(jb[k] %||% "(absent)"))
     if (length(real) > 12) say("    - ... and %d more", length(real) - 12)
     if (length(real)) substantive <- c(substantive, f) else expected_only <- c(expected_only, f)
@@ -115,15 +126,16 @@ for (f in differ) {
   la <- readLines(pa, warn = FALSE, encoding = "UTF-8"); lb <- readLines(pb, warn = FALSE, encoding = "UTF-8")
   n <- max(length(la), length(lb)); la <- c(la, rep("", n - length(la))); lb <- c(lb, rep("", n - length(lb)))
   d <- which(la != lb)
-  vol <- d[grepl(VOLATILE_LINE, la[d]) & grepl(VOLATILE_LINE, lb[d])]
+  vol <- d[mask_dates(la[d]) == mask_dates(lb[d])]
   real <- setdiff(d, vol)
   if (f %in% c("file_manifest.csv") || grepl("(^|/)file_manifest\\.csv$", f)) {
     say("- `%s`: %d line(s) differ (checksums of the files above)", f, length(d))
     expected_only <- c(expected_only, f); next
   }
   say("- `%s`: %d line(s) differ%s", f, length(d),
-      if (length(vol)) sprintf(", %d of them dates", length(vol)) else "")
+      if (length(vol)) sprintf(", %d of them only in dates", length(vol)) else "")
   if (!in_maps) for (i in head(real, 5)) say("    - line %d: `%s` vs `%s`", i, short(la[i]), short(lb[i]))
+  if (in_maps && length(real)) say("    - %d line(s) differ in more than dates (map lines are not printed)", length(real))
   if (length(real)) substantive <- c(substantive, f) else expected_only <- c(expected_only, f)
 }
 

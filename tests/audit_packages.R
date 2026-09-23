@@ -194,13 +194,26 @@ audit_narrative_metadata_consistency <- function(version_dir) {
         problems <- c(problems, sprintf("non-indigenous records: narrative %s vs metadata %s", narr_split[3], non$records))
     }
 
-    # --- Basin UNITS (bug 1 + Lucian 2026-07): "N hydrographic basin unit(s)"
-    # must equal metadata basins_count (the fine HydroBASINS unit count). The
-    # separate "named river basins" figure is intentionally NOT compared here.
-    narr_basins <- .grab(both, "([0-9,]+) hydrographic basin unit")
-    if (is.na(narr_basins)) narr_basins <- .grab(both, "([0-9,]+) hydrographic basin")  # legacy phrasing
-    if (.mismatch(.num(ind$basins_count), narr_basins))
-      problems <- c(problems, sprintf("basin units: narrative %s vs metadata %s", narr_basins, ind$basins_count))
+    # --- Basin UNITS (bug 1 + Lucian 2026-07): the HydroBASINS unit count must
+    # equal metadata basins_count. The narratives print it in two places:
+    #   canonical.md, section 2:  "Distinct names: N  |  HydroBASINS units: M"
+    #   narrative.txt:            "**N hydrographic basins** ... (across M HydroBASINS units)"
+    # Both are checked. The bold N is the count of distinct basin NAMES, a
+    # different quantity with no metadata field, and is never compared: the
+    # August 2026 rewording left this check matching "N hydrographic basin",
+    # i.e. the name count, and it failed every species with fewer names than
+    # units (first seen in the clean 1.0 demo, 2026-09-23). The md is read from
+    # section 2 only: section 3 repeats the label for the non-indigenous units.
+    units_md  <- .grab(md_ind, "HydroBASINS units: ([0-9,]+)")
+    units_txt <- .grab(txt, "across ([0-9,]+) HydroBASINS unit")
+    if (is.na(units_txt)) units_txt <- .grab(txt, "([0-9,]+) HydroBASINS unit")
+    if (is.na(units_md) && is.na(units_txt))                   # pre-2026-08 wording
+      units_md <- .grab(both, "([0-9,]+) hydrographic basin unit")
+    for (u in list(list(v = units_md, where = "canonical.md"), list(v = units_txt, where = "narrative.txt"))) {
+      if (.mismatch(.num(ind$basins_count), u$v))
+        problems <- c(problems, sprintf("basin units (%s): narrative %s vs metadata %s",
+                                        u$where, u$v, ind$basins_count))
+    }
 
     # --- post-2000 % (bug 3): "X% of records post-2000" ---
     narr_p2k <- .grab(both, "([0-9.]+)% of records post-2000")
