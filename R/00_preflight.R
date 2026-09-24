@@ -369,13 +369,14 @@ check_version_number <- function(config) {
 #' The input's encoding: UTF-8 without a byte-order mark (SERVICE_CONTRACT.md,
 #' section 2).
 #'
-#' The emailed WoC export of 2026-09-23 was Windows-1252. Letters that encoding
-#' lacks (Ș, ț, ă, ł, ś ...) arrived as '?' ("S?laj", "Mehedin?i"), and its
-#' text fingerprints differently from the UTF-8 export of the same records. A
-#' revision built from it prints the broken names, and at the first UTF-8
-#' delivery every taxon carrying such text reads "changed". A service run
-#' refuses such a file; a run by hand warns (ingest decodes it as Windows-1252,
-#' and what became '?' stays lost).
+#' The emailed WoC export (.xlsx) of 2026-09-23, saved as text from a
+#' spreadsheet, came out Windows-1252. Letters that encoding lacks (Ș, ț, ă, ł,
+#' ś ...) became '?' ("S?laj", "Mehedin?i"), and the text fingerprinted
+#' differently from the same records written as UTF-8. A revision built from it
+#' prints the broken names, and at the first clean delivery every taxon carrying
+#' such text reads "changed". A service run refuses such a file; a run by hand
+#' warns (ingest decodes it as Windows-1252, and what became '?' stays lost).
+#' tools/xlsx_to_tsv.R writes the xlsx as UTF-8.
 #'
 #' @return A data frame of findings (severity, item, detail), possibly empty.
 check_input_encoding <- function(config) {
@@ -405,11 +406,12 @@ check_input_encoding <- function(config) {
     add(sev, "input_file encoding", sprintf(paste0(
       "'%s' is not UTF-8: %d of %d lines hold bytes that are not valid UTF-8 ",
       "(Windows-1252 text, most likely). Letters that encoding lacks arrive as ",
-      "'?' and stay lost, and the text fingerprints differently from the UTF-8 ",
-      "export of the same records, so every taxon holding such text would read ",
-      "\"changed\" at the next UTF-8 delivery. %s"),
+      "'?' and stay lost, and the text fingerprints differently from the same ",
+      "records written as UTF-8, so every taxon holding such text would read ",
+      "\"changed\" at the next clean delivery. A spreadsheet's text save does ",
+      "this: convert an xlsx export with tools/xlsx_to_tsv.R instead. %s"),
       path, bad, length(lines),
-      if (sev == "FATAL") "The service takes UTF-8 only: ask WoC for the UTF-8 export."
+      if (sev == "FATAL") "The service takes UTF-8 only."
       else "It will be decoded as Windows-1252."))
   }
   done()

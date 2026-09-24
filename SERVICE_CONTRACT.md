@@ -108,20 +108,28 @@ input. A taxon missing from the input would be missing from the revision.
 | Extra columns | ignored |
 | A column named twice | the first is used, with a warning |
 
-**The file as WoC writes it, never re-saved.** The fingerprints compare text
-exactly, so the file must reach the run folder byte for byte as WoC's builder
-wrote it. A spreadsheet re-save changes the text of many records without any
-error. The emailed export of 2026-09-23 had been saved that way:
+**Never through a spreadsheet.** The fingerprints compare text exactly, so the
+table must reach the run folder as WoC wrote it:
 
-- Windows-1252 instead of UTF-8, with letters that encoding lacks turned into
-  `?` (`S?laj`, `Mehedin?i`);
-- 2,536 fields wrapped in quotes, their inner quotes doubled.
+- The runner fetches WoC's TSV as it is.
+- Until then the export arrives by email as `.xlsx`. It is converted with
+  `Rscript tools/xlsx_to_tsv.R <export.xlsx> <input.tsv>`, which writes every
+  cell as the text the xlsx stores.
 
-On that file, 86 of 680 taxa read differently from the UTF-8 export of the same
-records. A revision built from it would print the broken text. At the first
-clean delivery, those taxa would then read `changed` without any change in
-WoC. The encoding is the part the preflight can detect, so a service run
-refuses a file that is not UTF-8, or that starts with a byte-order mark.
+Saving the xlsx as text from a spreadsheet changes records without any error.
+The 2026-09-23 export, saved that way, came out:
+
+- in Windows-1252 instead of UTF-8, with letters that encoding lacks turned
+  into `?` (`S?laj`, `Mehedin?i`);
+- with 2,536 fields wrapped in quotes, their inner quotes doubled;
+- with decimal commas, and one coordinate pair rounded to fewer decimals.
+
+On that file, 92 of 680 taxa (8,214 records) differed from the script's
+conversion of the same xlsx. A revision built from it would print the broken
+text. At the next clean delivery, those taxa would then read `changed` without
+any change in WoC. The encoding is the part the preflight can detect, so a
+service run refuses a file that is not UTF-8, or that starts with a byte-order
+mark.
 
 **Columns.** Either the Darwin Core header or the legacy WoC header is
 accepted for each column.

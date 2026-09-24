@@ -77,7 +77,8 @@ ok("NA preserved",                 is.na(fixed[4]))
 ok("all output valid UTF-8",       all(stringi::stri_enc_isutf8(na.omit(fixed))))
 
 # The export is Windows-1252, not latin1: 0x92 and 0x96 are ’ and –, which
-# latin1 turns into invisible control characters (2026-09-23 export: 17,386
+# latin1 turns into invisible control characters (a spreadsheet's text save of
+# the 2026-09-23 export: 17,386
 # records, mostly citations).
 cite <- rawToChar(as.raw(c(0x53, 0x6d, 0x69, 0x74, 0x68, 0x92, 0x73, 0x20,   # Smith's
                            0x31, 0x39, 0x39, 0x30, 0x96, 0x31, 0x39, 0x39, 0x35)))  # 1990-1995

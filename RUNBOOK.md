@@ -242,19 +242,20 @@ computed them changed.
    range to take it out of.
    ```bash
    mkdir -p /data/runs/<run_id>
-   tools/clear_extinction_claims.sh <export>.tsv /data/runs/<run_id>/input.tsv
+   Rscript tools/xlsx_to_tsv.R <export>.xlsx /data/runs/<run_id>/export.tsv
+   tools/clear_extinction_claims.sh /data/runs/<run_id>/export.tsv /data/runs/<run_id>/input.tsv
    ```
-   The script prints the records, the claims it cleared and the taxa they
-   belong to. It then checks that every other column is byte-identical to the
-   export. Never clear the column in a spreadsheet: a re-save re-encodes the
-   file (SERVICE_CONTRACT section 2).
-   - The export must be the file WoC's builder writes: UTF-8 and never
-     re-saved. 1.0 is what every later revision compares with, so a byte that
+   The first script converts the emailed xlsx without a spreadsheet. The
+   second clears the claims, and prints the records, the claims it cleared and
+   the taxa they belong to. It then checks that every other column is
+   byte-identical to the export. Keep `export.tsv`: it is 1.1's input.
+   - Never open or save the export in a spreadsheet (SERVICE_CONTRACT section
+     2). 1.0 is what every later revision compares with, so a byte that
      differs from later deliveries reads as a change forever after.
    - Run it exactly as section 3 does: same `run.json`, same volumes, same
      image. The runner finds it there as its predecessor.
    - No `species_scope`; with no prior revision, every taxon is `new`.
-4. **1.1** reads the same export as it is, claims included. Only the taxa with
+4. **1.1** reads the same export as it is (`export.tsv`), claims included. Only the taxa with
    a claim read `changed`: on the 2026-09-23 export, 201 claims in 19 taxa.
    Every other taxon keeps its 1.0 package. The 1.0 → 1.1 temporal delta is then
    exactly what the claims take away. From 1.1 on, revisions are the runner's.

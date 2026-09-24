@@ -71,6 +71,8 @@ WORKDIR /work
 COPY R/                          R/
 COPY tests/                      tests/
 COPY checkcover_main.R config.R  ./
+# The operator's tools, e.g. xlsx_to_tsv.R for an emailed export; a test runs it.
+COPY tools/                      tools/
 
 # Offline lookup tables. NB the two prefixed filenames: these tables are also
 # published as manuscript supplements and carry their supplement number in the
