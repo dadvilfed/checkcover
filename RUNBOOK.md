@@ -248,21 +248,35 @@ computed them changed.
    The first script converts the emailed xlsx without a spreadsheet. The
    second clears the claims, and prints the records, the claims it cleared and
    the taxa they belong to. It then checks that every other column is
-   byte-identical to the export. Keep `export.tsv`: it is 1.1's input.
+   byte-identical to the export.
    - Never open or save the export in a spreadsheet (SERVICE_CONTRACT section
      2). 1.0 is what every later revision compares with, so a byte that
      differs from later deliveries reads as a change forever after.
    - Run it exactly as section 3 does: same `run.json`, same volumes, same
      image. The runner finds it there as its predecessor.
    - No `species_scope`; with no prior revision, every taxon is `new`.
-4. **1.1** reads the same export as 1.0, claims included (`export.tsv`).
-   - Only the taxa with a claim read `changed`: on the 2026-09-23 export, 201
-     claims in 19 taxa.
-   - Every other taxon keeps its 1.0 package.
-   - The 1.0 → 1.1 temporal delta is then exactly what the claims take away.
-
-   A 1.1 on a later export would also carry every edit made in WoC since. After
-   1.1, revisions are the runner's.
+   - Audit it (section 3, step 5). WoC installs 1.0 by hand. Besides the
+     revision folder it needs `input.tsv` itself, with its sha256: WoC
+     measures what is new for each taxon against the table of that taxon's
+     latest revision. For later revisions WoC keeps the table it sends, so this
+     is the only time a run's input leaves the server. It carries exact
+     coordinates: send it privately and on its own, never inside the revision
+     folder.
+4. **1.1 is the runner's first job** (Lucian, 2026-09): the full table as WoC
+   sends it, claims included. It rebuilds the taxa with a claim (201 claims in
+   19 taxa on the 2026-09-23 export). It also rebuilds every taxon edited in
+   WoC since the baseline's export, and any taxon whose text the builder
+   writes differently from the xlsx the baseline came from. Before 1.1 runs,
+   compare one table from the builder with 1.0's input, so that the second
+   kind is known in advance:
+   ```bash
+   Rscript tools/compare_inputs.R /data/runs/<1.0 run_id>/input.tsv <builder table>.tsv taxa.tsv
+   ```
+   It prints, per fingerprint column, how many records and taxa differ, and
+   whether each difference is whitespace, Unicode form, case or a real edit.
+   It prints counts and package ids only. On the 2026-09-23 export, the
+   baseline against the full export differs in exactly the 201 claims of 19
+   taxa.
 
 The preflight refuses a state dir whose `temporal/` has history but whose output
 root has no revisions, so the old history cannot leak into the new series by
