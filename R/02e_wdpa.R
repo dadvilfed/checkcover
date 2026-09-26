@@ -243,7 +243,7 @@ enrich_with_wdpa <- function(result, output_dir = "checkover_output",
         } else {
           character(0)
         }
-        nms <- unique(c(n_poly, n_pts))
+        nms <- unique(fix_c1_controls(c(n_poly, n_pts)))   # WDPA's own encoding slips
         nms <- nms[!is.na(nms) & nzchar(nms)]
         out_vec[i] <- if (length(nms) == 0) NA_character_ else paste(nms, collapse = " | ")
       }

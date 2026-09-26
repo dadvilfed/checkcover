@@ -369,7 +369,7 @@ belongs to an interrupted run (RUNBOOK section 7).
 ├── <Package_id>/                 one per taxon built in this revision
 │   ├── package_metadata.json
 │   ├── maps/  narratives/  citations/
-│   ├── file_manifest.csv         size and md5 of every file
+│   ├── file_manifest.csv         size and md5 of every other file (see below)
 │   └── README.md
 └── checkover/
     ├── manifest.json             every taxon of the input, and where its package lives
@@ -382,6 +382,15 @@ belongs to an interrupted run (RUNBOOK section 7).
 
 Only taxa built in this revision have a folder. An `unchanged` or `deferred`
 taxon's package stays in its `source_version` folder.
+
+`file_manifest.csv` has the columns `filename`, `filepath`, `size_bytes`,
+`file_type` and `md5`, one row per file of the package except itself.
+
+- **From the tag after `runtime-1.0`:** `filepath` is relative to the package
+  folder (`maps/Astacus_astacus_AOO.geojson`), and `README.md` is listed.
+- **Packages built by `runtime-1.0`:** `filepath` is the server's absolute path
+  (`/data/output/1.0/Astacus_astacus/maps/...`), and `README.md` is not listed.
+  Read the part after `/<Package_id>/`, which works for both forms.
 
 ### `manifest.json`
 

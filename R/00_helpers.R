@@ -468,6 +468,36 @@ fmt_latlon <- function(lat, lon, digits = 2) {
   return(NA_real_)
 }
 
+#' Text whose Windows-1252 punctuation arrived as C1 control characters.
+#'
+#' WDPA stores some site names that way: "Bodrogzug–Kopasz-hegy–Taktaköz"
+#' carries U+0096 where the en dash should be, and it reached three 1.0
+#' narratives. Each U+0080-U+009F becomes the character Windows-1252 has at
+#' that byte (U+0096 -> en dash); the five bytes it leaves undefined are
+#' dropped. The result is NFC. Anything else is left alone.
+fix_c1_controls <- function(x) {
+  if (!is.character(x)) return(x)
+  hit <- !is.na(x) & grepl("[\\x{80}-\\x{9f}]", x, perl = TRUE)
+  if (!any(hit)) return(x)
+  from <- intToUtf8(0x80:0x9f, multiple = TRUE)
+  to <- c("€", "", "‚", "ƒ", "„", "…", "†", "‡",
+          "ˆ", "‰", "Š", "‹", "Œ", "", "Ž", "",
+          "", "‘", "’", "“", "”", "•", "–", "—",
+          "˜", "™", "š", "›", "œ", "", "ž", "Ÿ")
+  x[hit] <- stringi::stri_trans_nfc(
+    stringi::stri_replace_all_fixed(x[hit], from, to, vectorize_all = FALSE))
+  x
+}
+
+#' Sentences joined by one space, skipping the empty ones.
+#'
+#' Narrative paragraphs are built from optional phrases. Pasting them with a
+#' fixed " " left two spaces wherever a phrase was empty (95 narratives in 1.0).
+join_sentences <- function(...) {
+  parts <- trimws(unlist(list(...)))
+  paste(parts[!is.na(parts) & nzchar(parts)], collapse = " ")
+}
+
 #' The EOO layer's hull, by the metric's rule: none below three DISTINCT points.
 #'
 #' Module 8 used to count records instead of localities. A taxon with three

@@ -1,5 +1,47 @@
 #### MODULE 9: SPECIES PACKAGE EXPORT ####
 
+# ── What a package holds, as its README and file manifest describe it ────────
+
+# The package's file tree, from the files it holds, the package id shown as *.
+.package_tree <- function(species_dir, sp_clean) {
+  tee <- "├── "; elbow <- "└── "; bar <- "│   "
+  lines <- paste0(sp_clean, "/")
+  for (d in c("maps", "narratives", "citations")) {
+    f <- sort(list.files(file.path(species_dir, d)), method = "radix")
+    if (!length(f)) next
+    f <- ifelse(startsWith(f, sp_clean), paste0("*", substring(f, nchar(sp_clean) + 1L)), f)
+    lines <- c(lines, paste0(tee, d, "/"),
+               paste0(bar, ifelse(seq_along(f) == length(f), elbow, tee), f))
+  }
+  c(lines, paste0(tee, "package_metadata.json"), paste0(tee, "file_manifest.csv"),
+    paste0(elbow, "README.md"))
+}
+
+# Which map layers a package has, e.g. "AOO, HydroBASINS" when it has no EOO.
+.package_map_kinds <- function(files) {
+  k <- c(EOO = "EOO", AOO = "AOO", basins = "HydroBASINS")
+  have <- vapply(names(k), function(x) any(grepl(paste0("_", x, "\\."), files)), NA)
+  if (any(have)) paste(k[have], collapse = ", ") else "none"
+}
+
+# The formats among some files, e.g. "Markdown, text, JSON".
+.package_formats <- function(files) {
+  k <- c(md = "Markdown", txt = "text", json = "JSON", bib = "BibTeX", csv = "CSV", cff = "CFF")
+  e <- unique(tolower(tools::file_ext(files)))
+  paste(k[intersect(names(k), e)], collapse = ", ")
+}
+
+# file_manifest.csv: every file of the package but the manifest itself, its
+# path relative to the package folder, size and md5. 1.0 recorded the server's
+# absolute path (/data/output/1.0/<id>/maps/...), which says nothing to a
+# reader and changes with the mount; it also left out README.md.
+.package_file_manifest <- function(files, sp_clean) {
+  rel <- sub(paste0("^.*?/", sp_clean, "/"), "", files, perl = TRUE)
+  data.frame(filename = basename(files), filepath = rel, size_bytes = file.size(files),
+             file_type = tools::file_ext(files), md5 = unname(tools::md5sum(files)),
+             stringsAsFactors = FALSE)
+}
+
 #' Export individual species packages with maps, narratives, and citations
 #' @param scenario_table Scenario detection table
 #' @param all_maps Maps result object
@@ -381,66 +423,32 @@ export_species_packages <- function(ctx,
       jsonlite::write_json(package_metadata, metadata_file, pretty = TRUE, auto_unbox = TRUE, na = "null")
       package_files$metadata <- metadata_file
       
-      # --- 5. MANIFEST ---
-      all_files <- unlist(package_files)
-      
-      manifest <- data.frame(
-        filename = basename(all_files),
-        filepath = all_files,
-        size_bytes = file.size(all_files),
-        file_type = tools::file_ext(all_files),
-        stringsAsFactors = FALSE
-      )
-      
-      # Add checksums if digest available
-      if (requireNamespace("digest", quietly = TRUE)) {
-        manifest$md5 <- vapply(all_files, function(f) {
-          digest::digest(file = f, algo = "md5")
-        }, character(1))
-      }
-      
-      manifest_file <- file.path(species_dir, "file_manifest.csv")
-      write.csv(manifest, manifest_file, row.names = FALSE)
-      
-      # --- 6. README ---
+      # --- 5. README ---
+      # Written before the manifest, which lists it. The contents lines and the
+      # tree describe the files this package holds: a fixed tree listed EOO
+      # layers in the 89 packages of 1.0 that have none, and left out the
+      # canonical narrative.
       readme_text <- sprintf(
         "# %s Species Package\n\n",
         sp
       )
-      
+
       if (!is.na(vernacular_string) && nzchar(vernacular_string)) {
         readme_text <- paste0(readme_text, sprintf("**Common names:** %s\n\n", vernacular_string))
       }
-      
+
+      cts <- package_metadata$contents
       readme_text <- paste0(
         readme_text,
         sprintf("**Scenario:** %s\n", scenario_desc),
         sprintf("**Generated:** %s\n\n", Sys.Date()),
         "## Package Contents\n\n",
-        sprintf("- **Maps:** %d files (EOO, AOO, HydroBASINS)\n", length(package_metadata$contents$maps)),
-        sprintf("- **Narratives:** %d files (text, JSON)\n", length(package_metadata$contents$narratives)),
-        sprintf("- **Citations:** %d files (JSON, BibTeX, CSV, CFF)\n", length(package_metadata$contents$citations)),
+        sprintf("- **Maps:** %d files (%s)\n", length(cts$maps), .package_map_kinds(cts$maps)),
+        sprintf("- **Narratives:** %d files (%s)\n", length(cts$narratives), .package_formats(cts$narratives)),
+        sprintf("- **Citations:** %d files (%s)\n", length(cts$citations), .package_formats(cts$citations)),
         "\n## File Structure\n\n",
         "```\n",
-        paste0(sp_clean, "/\n"),
-        "├── maps/\n",
-        "│   ├── *_EOO.geojson\n",
-        "│   ├── *_EOO.kml\n",
-        "│   ├── *_AOO.geojson\n",
-        "│   ├── *_AOO.kml\n",
-        "│   ├── *_basins.geojson\n",
-        "│   └── *_basins.kml\n",
-        "├── narratives/\n",
-        "│   ├── *_narrative.txt\n",
-        "│   └── *_narrative.json\n",
-        "├── citations/\n",
-        "│   ├── *_bibliography.json\n",
-        "│   ├── *_bibliography.bib\n",
-        "│   ├── *_bibliography.csv\n",
-        "│   └── *_CITATION.cff\n",
-        "├── package_metadata.json\n",
-        "├── file_manifest.csv\n",
-        "└── README.md\n",
+        paste0(.package_tree(species_dir, sp_clean), "\n", collapse = ""),
         "```\n\n",
         "## License\n\n",
         "CC-BY-4.0\n\n",
@@ -449,10 +457,16 @@ export_species_packages <- function(ctx,
         "> ", CHECKOVER_REFERENCE$text, "\n\n",
         "The sources of the occurrence records are in the `citations/` folder.\n"
       )
-      
+
       readme_file <- file.path(species_dir, "README.md")
       writeLines(enc2utf8(readme_text), readme_file, useBytes = TRUE)   # UTF-8 in any locale
-      
+      package_files$readme <- readme_file
+
+      # --- 6. MANIFEST ---
+      manifest_file <- file.path(species_dir, "file_manifest.csv")
+      write.csv(.package_file_manifest(unlist(package_files), sp_clean), manifest_file,
+                row.names = FALSE)
+
       log_info("  Package complete: %d files total", files_count, module = module)
       
       packaged_species[[sp]] <- list(

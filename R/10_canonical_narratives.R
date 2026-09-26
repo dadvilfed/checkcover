@@ -1665,11 +1665,12 @@ generate_canonical_narratives <- function(scenario_table,
     paste0("Validated records span **", yr_min, "\u2013", yr_max, "**", recent_note, ".")
   } else ""
   
-  paste0(
-    "Native occurrences span ", basin_phrase, ", recorded in ",
-    country_phrase, ". The species inhabits the **", teow_phrase,
-    "** terrestrial ecoregion(s), and is associated with the **", feow_phrase,
-    "** freshwater ecoregion(s). ", metrics_phrase, " ", temporal_phrase
+  join_sentences(
+    paste0("Native occurrences span ", basin_phrase, ", recorded in ",
+           country_phrase, ". The species inhabits the **", teow_phrase,
+           "** terrestrial ecoregion(s), and is associated with the **", feow_phrase,
+           "** freshwater ecoregion(s)."),
+    metrics_phrase, temporal_phrase
   )
 }
 
