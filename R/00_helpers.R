@@ -468,6 +468,26 @@ fmt_latlon <- function(lat, lon, digits = 2) {
   return(NA_real_)
 }
 
+#' The EOO layer's hull, by the metric's rule: none below three DISTINCT points.
+#'
+#' Module 8 used to count records instead of localities. A taxon with three
+#' records at two localities got a hull anyway, and s2 draws two points as a
+#' thin triangle with an invented third corner. In 1.0 (2026-09-26) that hit 8
+#' taxa, one corner up to 1.9 degrees from any record, while their metadata
+#' and narratives said EOO undefined.
+#'
+#' @param pts An sf of points.
+#' @return The convex hull (sfc), or NULL when the EOO is undefined.
+eoo_hull <- function(pts) {
+  if (is.null(pts) || nrow(pts) == 0L) return(NULL)
+  xy <- sf::st_coordinates(pts)[, c("X", "Y"), drop = FALSE]
+  xy <- unique(xy[is.finite(xy[, 1]) & is.finite(xy[, 2]), , drop = FALSE])
+  if (nrow(xy) < 3L) return(NULL)
+  hull <- sf::st_convex_hull(sf::st_union(pts))
+  if (!all(sf::st_is_valid(hull))) hull <- sf::st_make_valid(hull)
+  hull
+}
+
 #' Area of occupancy on a true equal-area 2 x 2 km lattice.
 #'
 #' THE canonical AOO implementation. Seven copies of the same lattice arithmetic

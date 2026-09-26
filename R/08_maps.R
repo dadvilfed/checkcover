@@ -146,16 +146,15 @@ generate_all_maps <- function(scenario_table,
           log_info("  EOO: skipping (Scenario 2 — no native range)", module = module)
         }
         
+        # eoo_hull() draws no layer below three distinct localities, as the
+        # EOO metric does (R/00_helpers.R).
         eoo_poly <- NULL
-        if (!is.null(eoo_sf_source) && nrow(eoo_sf_source) >= 3) {
-          eoo_poly <- tryCatch({
-            hull <- sf::st_convex_hull(sf::st_union(eoo_sf_source))
-            if (!all(sf::st_is_valid(hull))) hull <- sf::st_make_valid(hull)
-            hull
-          }, error = function(e) {
+        if (!is.null(eoo_sf_source)) {
+          eoo_poly <- tryCatch(eoo_hull(eoo_sf_source), error = function(e) {
             log_warn("  EOO calculation failed: %s", conditionMessage(e), module = module)
             NULL
           })
+          if (is.null(eoo_poly)) log_info("  EOO: skipping (<3 distinct localities)", module = module)
         }
         
         if (!is.null(eoo_poly)) {
