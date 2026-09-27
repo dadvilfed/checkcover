@@ -482,20 +482,89 @@ installing. The detail blocks name files and reasons, never coordinates.
 
 ## 7. The runner's obligations
 
-1. Never start a run while another is running. There is one state dir, and a
-   revision inherits from the one before it.
-2. Upload a revision **only** if all three hold:
-   - cheCkOVER exited `0`;
-   - the audit exited `0`;
-   - `_audit_report.json` has `"passed": true`, with a `framework_version`
-     equal to the run's.
+The runner is the small program on the UVT server that takes a job from WoC,
+runs cheCkOVER and sends the revision back. WoC writes it; this section is
+what it must do on the UVT side. The steps themselves are in RUNBOOK section 3.
 
-   Otherwise nothing leaves the server: mark the run failed and delete the
-   revision folder (RUNBOOK section 3, step 5).
-3. Upload `/data/output/<rev>/` only. Never anything from `/data/state/` or
-   `/data/runs/`. The progress lines of `run.log` are safe to forward: the log
-   prints record ids, never coordinates.
-4. Recover from failures by RUNBOOK sections 4 and 7.
+**Where it lives**
+
+1. It runs as the account **`checkover`**, which has no sudo, from
+   `/home/checkover/`. Never as `ubuntu`, never as root.
+   - The image `checkover:<tag>` belongs to that account: rootless Podman
+     images are per user.
+   - A long-running service needs lingering, which is enabled for `checkover`
+     (a systemd user service or timer).
+   - Under `sudo -iu checkover`, export `XDG_RUNTIME_DIR=/run/user/$(id -u)`
+     first.
+2. The WoC token sits in one file readable by `checkover` only (mode 600).
+   - It goes in a request header, never in a URL, a log or the repository.
+   - The runner sends it only to the WoC API.
+3. The image tag it runs is set in the runner's configuration, for example
+   `checkover:runtime-1.0`. It changes only when a new tag is deployed
+   (RUNBOOK section 6).
+
+**A job, from start to end**
+
+4. **One run at a time.** Hold a lock (e.g. `flock` on `/data/runs/.lock`)
+   from taking a job until its upload ends. There is one state dir, and a
+   revision inherits from the one before it. A job that arrives while a run
+   holds the lock waits.
+5. **Before taking a job,** check:
+   - `/data/output/<rev>/` does not exist;
+   - the disk has at least 20 GB free (`df /data`).
+
+   If either fails, report it and do not start.
+6. **The input** goes straight into `/data/runs/<run_id>/input.tsv`, and
+   nowhere else.
+   - Download it with `curl -fL`, by POST when the link requires it.
+   - Compare its sha256 with the one the job carries. On a mismatch, report
+     it and do not start: the fingerprints of a run are only as good as its
+     input.
+7. **`run.json`** is exactly RUNBOOK section 3, step 2:
+   - `framework_version` is a string;
+   - `species_scope` is package ids, or absent or `null` for a full run;
+   - `code_tag` is the image tag.
+8. **Start** with the exact `podman run` of RUNBOOK section 3, step 3:
+   - the container is named `checkover_<run_id>`;
+   - the four volumes;
+   - `--memory=48g` where the memory controller is delegated.
+
+   Do not time a run out early: the full cohort takes about 30 hours (1.0:
+   30.2 h, peak 30.7 GB), and a few changed taxa take hours.
+9. **Progress** can be reported from `status.json` (`status`,
+   `current_phase`, `elapsed_seconds`) and from the lines of `run.log`. Both
+   are safe to forward: the log prints record ids, never coordinates.
+10. **The exit code decides:**
+    - `0`: go to the audit.
+    - `1`: failed. Clean up by RUNBOOK section 4 and retry once with the same
+      `run.json` and input. If the retry fails too, report the `message` from
+      `status.json` and the tail of `run.log`.
+    - `2`: refused. Report `preflight.json` and do not retry: the cause has to
+      be fixed first.
+11. **The audit gate.** Run the audit (RUNBOOK section 3, step 5). Upload
+    **only** if all three hold:
+    - cheCkOVER exited `0`;
+    - the audit exited `0`;
+    - `_audit_report.json` has `"passed": true`, with a `framework_version`
+      equal to the run's.
+
+    Otherwise nothing leaves the server: mark the run failed, copy the report
+    to the run folder, and delete the revision folder.
+12. **Upload `/data/output/<rev>/` only**, including its `checkover/` folder,
+    in 8 MB parts. Never anything from `/data/state/` or `/data/runs/`. WoC
+    keeps the input it sent, so the input never goes back.
+13. **Afterwards, leave `/data/output/<rev>/` in place.** It is the mirror of
+    what WoC installed, and the next run's predecessor. Delete it only if WoC
+    discards the revision. A run's `work/` folder may go a week after the
+    upload (RUNBOOK section 5).
+
+**When things go wrong**
+
+14. **On start** (after a reboot, for instance), look for runs whose
+    `status.json` still says `running`. Each was interrupted: recover it by
+    RUNBOOK section 7, then retry it as in obligation 10.
+15. **The runner's own log** may name runs, revisions, exit codes and timings.
+    It must never contain the token, a download link, or a line of the input.
 
 ---
 

@@ -82,6 +82,8 @@ For run `<run_id>`, revision `<rev>` and image tag `<tag>`:
      "species_scope": ["<taxon>", "..."],
      "code_tag": "<tag>" }
    ```
+   `input.tsv` is fetched straight into the run folder, and its sha256 must
+   equal the one the job carries; stop if it does not.
    `framework_version` is a string. Leave out `species_scope`, or set it to
    `null`, for a full run. Taxa are listed by **package id**
    (`"Astacus_astacus"`), exactly as the manifest keys them. A display name
