@@ -185,10 +185,16 @@ Rebuild only to deploy a **new** code tag. Tags are immutable: never rebuild an
 existing tag in place.
 
 The one exception was made before the live series had a lasting revision. On
-2026-09-27, `runtime-1.0` moved from `24908e7` to the commit that carries this
-note, because 1.0 was to be re-run with the new hydronym table anyway. Nothing
-built by `24908e7` stays installed once that re-run replaces 1.0. The old image
-is kept as `checkover_runtime-1.0_24908e7.tar` until then. `ecoregions` is pinned to a commit, but the CRAN
+2026-09-27, `runtime-1.0` moved from `24908e7`, with no image built in between,
+to the commit that carries this note:
+- the completed hydronym table (Supplement File S2, sha256
+  `0e621b21…0191`);
+- the review fixes.
+
+Only 1.0 was built by `24908e7`. WoC corrects its basin names offline with the
+same table, and the corrected 1.0 replaces `/data/output/1.0`. Every revision
+from 1.1 on is built by the moved tag. The old image is kept as
+`checkover_runtime-1.0_24908e7.tar`, because it built 1.0. `ecoregions` is pinned to a commit, but the CRAN
 packages come from whatever the base image's package snapshot serves, so a
 rebuild months later can still differ. Keep the saved image (step 2).
 
