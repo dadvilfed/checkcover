@@ -69,14 +69,17 @@ flatten <- function(x, prefix = "") {
 leaf <- function(path) sub("^.*\\.", "", path)
 short <- function(s, n = 70) ifelse(nchar(s) > n, paste0(substr(s, 1, n - 3), "..."), s)
 
-coords_of <- function(g) {           # every number under "coordinates", in order
-  out <- numeric(0)
-  walk <- function(x, inside = FALSE) {
-    if (is.list(x)) { nm <- names(x); for (i in seq_along(x))
-      walk(x[[i]], inside || (!is.null(nm) && identical(nm[i], "coordinates"))) }
-    else if (inside && is.numeric(x)) out <<- c(out, x)
+# Every number under "coordinates", in order. Each geometry's coordinates are
+# flattened by one unlist(). The earlier version appended number by number,
+# which is quadratic: on the P. leptodactylus basin layer (hundreds of
+# thousands of coordinates) a comparison ran for hours.
+coords_of <- function(g) {
+  pick <- function(x) {
+    if (!is.list(x)) return(NULL)
+    if (!is.null(names(x)) && "coordinates" %in% names(x)) return(unlist(x[["coordinates"]], use.names = FALSE))
+    unlist(lapply(x, pick), use.names = FALSE)
   }
-  walk(g); out
+  as.numeric(pick(g))
 }
 
 lines_out <- character(0)
