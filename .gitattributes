@@ -1,3 +1,8 @@
 # Shell scripts run on Linux servers: keep LF even in a Windows checkout,
 # or bash fails on the carriage returns.
 *.sh text eol=lf
+
+# The hydronym table (Supplement File S2) is identified by its sha256, which
+# WoC checks in every manifest's lookup_tables. Stored and checked out byte for
+# byte: no line-ending conversion, on any platform.
+Table_S3.tsv -text

@@ -240,7 +240,11 @@ under `spatial_data/`:
 | TEOW | WWF | terrestrial ecoregions |
 
 Offline lookups ship with the repo: `WoC_canonical_country_continent.tsv`
-(canonical geographic vocabulary), `Table_S3.tsv` (HydroBASINS names, 39 MB),
+(canonical geographic vocabulary), `Table_S3.tsv` (the hydronym table,
+Supplement File S2: names for every HydroBASINS v1c unit at levels 6, 8 and
+10, 42 MB, sha256 `0e621b21…0191`, completed in 2026-09 from HydroRIVERS v1.0,
+Wikidata (CC0) and GeoNames (CC-BY 4.0); how, and what to cite, in
+[Table_S3_README.md](Table_S3_README.md)),
 `(Table_S4)ecoregions_list.tsv` (freshwater ecoregion names) and
 `(Table_S2)vernacular_names_wide.tsv` (curated common names). The last two also
 serve as manuscript supplements, hence the prefixed filenames — set
