@@ -298,6 +298,22 @@ ok(if (file.exists("/proc/self/status")) is.numeric(c0$status$peak_rss_mb) && c0
    else is.null(c0$status$peak_rss_mb),
    "status.json records peak memory (Linux; absent where /proc does not exist)")
 
+# ---- the hydronym table from the run folder (2026-09: it lives on WoC) ----
+base_d <- c(base, list(dictionaries = list(feow = "(Table_S4)ecoregions_list.tsv", hydrobasins = "Table_S3.tsv")))
+req <- '"framework_version": "1.1", "input_file": "/data/runs/%s/input.tsv", "root_output_dir": "/data/output", "state_dir": "/data/state"'
+fd1 <- put("run_d1", sprintf('{ %s, "dictionaries": {"hydrobasins": "/data/runs/run_d1/hydronyms.tsv"} }', sprintf(req, "run_d1")))
+cd1 <- apply_run_file(base_d, path = fd1)
+ok(identical(cd1$dictionaries$hydrobasins, "/data/runs/run_d1/hydronyms.tsv") &&
+   identical(cd1$dictionaries$feow, "(Table_S4)ecoregions_list.tsv"),
+   "run.json can point the hydronym table at the run folder; the other dictionary is kept")
+fd2 <- put("run_d2", sprintf('{ %s, "dictionaries": {"hydrobasin": "/data/runs/run_d2/hydronyms.tsv"} }', sprintf(req, "run_d2")))
+rd2 <- refused(apply_run_file(base_d, path = fd2))
+pd2 <- read_json(file.path(home("run_d2"), "preflight.json"))
+ok(rd2$flagged && any(pd2$problems$item == "dictionaries.hydrobasin"),
+   "a misspelt dictionary key is refused, not silently ignored (exit 2)")
+fd3 <- put("run_d3", sprintf('{ %s, "dictionaries": {"hydrobasins": 5} }', sprintf(req, "run_d3")))
+ok(refused(apply_run_file(base_d, path = fd3))$flagged, "a dictionary path must be a string")
+
 unlink(tmp, recursive = TRUE)
 cat(sprintf("\n[test_run_file] %d passed, %d failed\n", pass, fail))
 quit(status = if (fail > 0) 1 else 0)

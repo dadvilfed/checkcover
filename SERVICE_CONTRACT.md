@@ -47,6 +47,20 @@ Any other setting of `config.R` may also be given. An object merges into its
 section, e.g. `"spatial": {"hydro_dir": "/data/spatial/hydrobasins"}`. An
 **unknown key is refused**, never ignored.
 
+**The hydronym table** (Supplement File S2) lives on WoC. The runner fetches it
+into the run home with the input, and points the run at it:
+
+```json
+"dictionaries": { "hydrobasins": "/data/runs/run_20261015_a1b2/hydronyms.tsv" }
+```
+
+- This works with every image, `runtime-1.0` included.
+- Without the setting, the table built into the image is used.
+- From the tag after `runtime-1.0`:
+  - a key inside `dictionaries` other than `hydrobasins` or `feow` is refused
+    (exit 2), so a misspelling cannot silently leave the built-in table in use;
+  - `manifest.json` records the table's name and sha256 (section 6).
+
 ### Taxon lists hold package ids
 
 `species_scope` and `force_reprocess` name taxa by **package id**: the folder
@@ -413,6 +427,7 @@ taxon's package stays in its `source_version` folder.
 | Field | |
 |---|---|
 | `prior_version` | the predecessor revision (section 4); `null` for the first |
+| `lookup_tables` | from the tag after `runtime-1.0`: the tables the names came from. `hydrobasins`, `feow` and `vernaculars`, each with `file`, `bytes` and `sha256` |
 | `species` | keyed by **package id**; one entry per taxon of the input |
 | `outcome` | `new` · `reprocessed` · `unchanged` · `deferred` · `deferred_new` |
 | `source_version` | the revision whose folder holds this taxon's package; `null` for `deferred_new` (no package) |
@@ -520,10 +535,14 @@ what it must do on the UVT side. The steps themselves are in RUNBOOK section 3.
    - Compare its sha256 with the one the job carries. On a mismatch, report
      it and do not start: the fingerprints of a run are only as good as its
      input.
+   The hydronym table goes into the same folder (`hydronyms.tsv`) and is checked
+   the same way, against the sha256 the job carries for it.
 7. **`run.json`** is exactly RUNBOOK section 3, step 2:
    - `framework_version` is a string;
    - `species_scope` is package ids, or absent or `null` for a full run;
-   - `code_tag` is the image tag.
+   - `code_tag` is the image tag;
+   - `dictionaries.hydrobasins` is the fetched table's path in the run folder
+     (section 1).
 8. **Start** with the exact `podman run` of RUNBOOK section 3, step 3:
    - the container is named `checkover_<run_id>`;
    - the four volumes;

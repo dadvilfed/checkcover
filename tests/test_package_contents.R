@@ -68,6 +68,16 @@ ok(regexpr("readme_file <- file.path", exp) < regexpr("manifest_file <- file.pat
    grepl("package_files$readme <- readme_file", exp, fixed = TRUE),
    "the README is written first and enters the manifest")
 
+# ---- the manifest records which lookup tables a revision used ----
+if (requireNamespace("digest", quietly = TRUE)) {
+  tab <- file.path(tmp, "hydronyms.tsv"); writeLines(c("Basin_level\tHYBAS_ID", "L6\t1"), tab)
+  lt <- .lookup_table_provenance(list(dictionaries = list(hydrobasins = tab, feow = file.path(tmp, "absent.tsv"))))
+  ok(identical(names(lt), "hydrobasins") && identical(lt$hydrobasins$file, "hydronyms.tsv") &&
+     identical(lt$hydrobasins$sha256, digest::digest(file = tab, algo = "sha256")),
+     "lookup_tables: file name and sha256 of each table present; absent tables left out")
+  ok(grepl("lookup_tables     = .lookup_table_provenance(", exp, fixed = TRUE), "manifest.json carries lookup_tables")
+}
+
 unlink(tmp, recursive = TRUE)
 cat(sprintf("\n[test_package_contents] %d passed, %d failed\n", pass, fail))
 quit(status = if (fail > 0) 1 else 0)

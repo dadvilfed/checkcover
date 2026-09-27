@@ -31,6 +31,22 @@
   paste(k[intersect(names(k), e)], collapse = ", ")
 }
 
+# The lookup tables this revision's names came from: file name, size, sha256.
+# The hydronym table moved to WoC in 2026-09 and reaches each run through
+# run.json, so the tables can differ between revisions; the manifest says
+# which ones a revision used.
+.lookup_table_provenance <- function(config) {
+  one <- function(path) {
+    if (is.null(path) || length(path) != 1L || !nzchar(path) || !file.exists(path)) return(NULL)
+    list(file = basename(path), bytes = file.size(path),
+         sha256 = digest::digest(file = path, algo = "sha256"))
+  }
+  out <- list(hydrobasins = one(config$dictionaries$hydrobasins),
+              feow        = one(config$dictionaries$feow),
+              vernaculars = one(config$vernaculars$path))
+  out[!vapply(out, is.null, logical(1))]
+}
+
 # file_manifest.csv: every file of the package but the manifest itself, its
 # path relative to the package folder, size and md5. 1.0 recorded the server's
 # absolute path (/data/output/1.0/<id>/maps/...), which says nothing to a
@@ -587,6 +603,8 @@ export_species_packages <- function(ctx,
       run_id            = ctx$run_id,
       generated_date    = format(ctx$generated_date, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
       prior_version     = prior_v,
+      lookup_tables     = .lookup_table_provenance(
+        if (exists("CONFIG", envir = globalenv())) get("CONFIG", envir = globalenv()) else NULL),
       totals = list(
         total_species_in_cohort = length(ctx$all_species),
         unchanged               = outcome_count("unchanged"),

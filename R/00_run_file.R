@@ -194,6 +194,22 @@ apply_run_file <- function(config, path = Sys.getenv("CHECKOVER_RUN", unset = ""
     problems[[length(problems) + 1L]] <- .problem("FATAL", k,
       "is required in a run file; a service run never falls back to config.R for it.")
   }
+  # The runner points `dictionaries` at tables it fetched into the run folder
+  # (the hydronym table lives on WoC since 2026-09). A misspelt key inside it
+  # would merge silently and leave the image's own table in use, so its keys
+  # must be ones config.R has.
+  if (is.list(rf$dictionaries) && !is.null(names(rf$dictionaries))) {
+    for (sk in setdiff(names(rf$dictionaries), names(config$dictionaries))) {
+      problems[[length(problems) + 1L]] <- .problem("FATAL", paste0("dictionaries.", sk), sprintf(
+        "is not a dictionary. Known: %s.", paste(names(config$dictionaries), collapse = ", ")))
+    }
+    for (sk in intersect(names(rf$dictionaries), names(config$dictionaries))) {
+      if (!.single_string(rf$dictionaries[[sk]])) {
+        problems[[length(problems) + 1L]] <- .problem("FATAL", paste0("dictionaries.", sk),
+          "must be a single non-empty string: the table's path.")
+      }
+    }
+  }
   for (k in intersect(names(rf), settable)) {
     msg <- .run_value_problem(k, rf[[k]])
     if (!is.null(msg)) problems[[length(problems) + 1L]] <- .problem("FATAL", k, msg)
