@@ -61,6 +61,7 @@ calculate_non_indigenous_metrics <- function(result_non_indigenous, output_dir =
         # Same thresholded rule as the indigenous branch (informational here —
         # the local/widespread split keys off EOO, not continents).
         n_continents = count_continents(continents),
+        n_localities = n_distinct_localities(longitude, latitude),
         eoo_km2 = .calc_eoo(longitude, latitude),
         aoo_km2 = .calc_aoo(longitude, latitude),
         .groups = "drop"
@@ -75,13 +76,14 @@ calculate_non_indigenous_metrics <- function(result_non_indigenous, output_dir =
     metrics <- metrics %>%
       mutate(
         category = case_when(
-          # <3 records: a convex-hull EOO needs >=3 non-collinear points, so
-          # eoo_km2 is NA here. Without this branch such species fell through the
-          # `TRUE ~ "widespread"` fallback and were labelled widespread purely
+          # <3 distinct localities: a convex-hull EOO needs >=3 distinct points,
+          # so eoo_km2 is NA here. Without this branch such species fell through
+          # the `TRUE ~ "widespread"` fallback and were labelled widespread purely
           # because their EOO was undefined (10 of 29 in v1.0) — the same
           # NA-falls-through pattern fixed on the indigenous side. Too few
-          # records is "local" (short-range), never "widespread".
-          n_records < 3 ~ "local",
+          # localities is "local" (short-range), never "widespread". It counts
+          # localities, not records: 3 records at 2 localities have no EOO either.
+          n_localities < 3 ~ "local",
           !is.na(eoo_km2) & eoo_km2 <= 5000 ~ "local",
           TRUE ~ "widespread"  # Everything else
         ),

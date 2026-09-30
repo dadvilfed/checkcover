@@ -67,6 +67,7 @@ calculate_indigenous_metrics <- function(result_indigenous, output_dir = "checko
         # stray or unlabelled record from making a species "cosmopolitan"
         # (Lucian, 2026-07). See count_continents() in 00_helpers.R.
         n_continents = count_continents(continents),
+        n_localities = n_distinct_localities(longitude, latitude),
         eoo_km2 = .calc_eoo(longitude, latitude),
         aoo_km2 = .calc_aoo(longitude, latitude),
         .groups = "drop"
@@ -83,11 +84,13 @@ calculate_indigenous_metrics <- function(result_indigenous, output_dir = "checko
       mutate(
         iucn_category = case_when(
           n_continents > 1 ~ "cosmopolitan",
-          # <3 records: short-range endemic by definition. A convex-hull EOO
-          # polygon needs >=3 non-collinear points, so eoo_km2 is NA here (NOT 0).
-          # Do NOT let an undefined EOO fall through to "regional" — 1 point is the
-          # strict definition of a short-range endemic (Lucian, 2026-06).
-          n_records < 3 ~ "endemic",
+          # <3 distinct localities: short-range endemic by definition. A
+          # convex-hull EOO polygon needs >=3 distinct points, so eoo_km2 is NA
+          # here (NOT 0). Do NOT let an undefined EOO fall through to "regional" —
+          # 1 point is the strict definition of a short-range endemic (Lucian,
+          # 2026-06). Counting RECORDS here let 3-5 records at 1-2 localities
+          # through to "regional" (8 taxa in 1.0); see n_distinct_localities().
+          n_localities < 3 ~ "endemic",
           !is.na(eoo_km2) & eoo_km2 <= 5000 & n_countries <= 2 & n_continents == 1 ~ "endemic",
           n_continents == 1 ~ "regional",
           TRUE ~ "regional"  # fallback

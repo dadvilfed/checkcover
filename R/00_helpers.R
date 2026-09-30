@@ -498,6 +498,21 @@ join_sentences <- function(...) {
   paste(parts[!is.na(parts) & nzchar(parts)], collapse = " ")
 }
 
+#' Distinct localities: the unique finite coordinate pairs of a record set.
+#'
+#' The EOO needs three of them (.calc_eoo() and eoo_hull() use this same rule),
+#' so the category rules below three localities key on this count, not on the
+#' number of records. Keying on records let a species with three to five records
+#' at one or two localities fall through to "regional" with an undefined EOO:
+#' 8 taxa in 1.0, among them Cambarus veitchorum (3 records at 1 locality).
+#'
+#' @param lon,lat Numeric vectors of coordinates.
+#' @return Integer count.
+n_distinct_localities <- function(lon, lat) {
+  keep <- is.finite(lon) & is.finite(lat)
+  nrow(unique(data.frame(lon = lon[keep], lat = lat[keep])))
+}
+
 #' The EOO layer's hull, by the metric's rule: none below three DISTINCT points.
 #'
 #' Module 8 used to count records instead of localities. A taxon with three
