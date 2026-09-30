@@ -10,6 +10,13 @@ sha256 `0e621b2132f08577b5f8393be6284a46987df702e6e468485722b1078fa00191` (`Supp
 The table carries no version of its own. It is identified by its name and by its sha256, and the
 revision manifest of cheCkOVER records which table a revision was built with.
 
+## Where the existing names come from
+
+The table was first built by intersecting the HydroBASINS units (HydroSHEDS; Lehner & Grill 2013) with
+river layers obtained from online sources, in ArcGIS. Which river layers were used, and under which licences,
+was not recorded. These first names are what this README calls "existing"; everything added since is
+documented below, with its source.
+
 ## How the table was completed
 
 The existing names were kept wherever they are real names. New values were added component by component
