@@ -19,8 +19,11 @@
 #                              this is a descriptive spatial signal, and the term
 #                              "fragmentation" is reserved for downstream
 #                              connectivity work
-#   n_records_retired          active records lost to the extinction mask
-#   n_records_added            new presence records
+#   n_records_retired          net fall in active records (both scopes): mostly
+#                              the extinction mask, but a record deleted in the
+#                              database counts too
+#   n_records_added            net rise in active records
+#   delta_EOO_km2 is 0, not blank, when either version's EOO is undefined.
 
 suppressPackageStartupMessages(library(jsonlite))
 
@@ -60,7 +63,7 @@ rows <- lapply(names(man$species), function(sp_clean) {
                       source_version = e$source_version %||% NA,
                       delta_EOO_km2 = NA, delta_AOO_km2 = NA,
                       delta_country_count = NA, delta_basin_count = NA,
-                      clustering_transition = NA, loss_hotspot_flagged = NA,
+                      clustering_transition = NA,
                       n_records_added = NA, n_records_retired = NA,
                       stringsAsFactors = FALSE))
   }
@@ -83,9 +86,10 @@ rows <- lapply(names(man$species), function(sp_clean) {
              delta_EOO_km2 = round(d_eoo), delta_AOO_km2 = round(d_aoo),
              delta_country_count = d_cty, delta_basin_count = d_bas,
              clustering_transition = trans,
-             # No geographic unit met the hotspot rule (>=5 baseline localities
-             # and >50% lost) in this run; verified against the run log.
-             loss_hotspot_flagged = "FALSE",
+             # No loss_hotspot_flagged column: hotspots are written only to the
+             # temporal delta report in the state dir, never to a package, so
+             # this script cannot see them. It used to print a constant "FALSE",
+             # checked by hand against one earlier run's log.
              n_records_added   = max(d, 0),
              n_records_retired = max(-d, 0),
              stringsAsFactors = FALSE)
