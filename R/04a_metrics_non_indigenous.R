@@ -32,16 +32,12 @@ calculate_non_indigenous_metrics <- function(result_non_indigenous, output_dir =
     } else cd
     
     # Helper: Calculate EOO
-    .calc_eoo <- function(lon, lat) {
-      coords <- unique(data.frame(lon, lat))
-      coords <- coords[is.finite(coords$lon) & is.finite(coords$lat), ]
-      if (nrow(coords) >= 3) {
-        pts <- sf::st_as_sf(coords, coords = c("lon", "lat"), crs = 4326)
-        hull <- sf::st_convex_hull(sf::st_union(pts))
-        return(as.numeric(sf::st_area(hull)) / 1e6)  # km²
-      }
-      return(NA_real_)
-    }
+    # Delegates to calc_eoo_km2() in 00_helpers.R, which also returns NA for a
+    # hull beyond a hemisphere: multi-continent non-native ranges (P. clarkii,
+    # C. destructor, C. quadricarinatus, P. virginalis) read as the whole Earth,
+    # 510,066,073 km², in 1.0 (Lucian, 2026-10). Such a range is still
+    # "widespread": the category rule below needs no EOO for it.
+    .calc_eoo <- function(lon, lat) calc_eoo_km2(lon, lat)
     
     # Helper: Calculate AOO
     # Delegates to calc_aoo_km2() in 00_helpers.R: one equal-area implementation

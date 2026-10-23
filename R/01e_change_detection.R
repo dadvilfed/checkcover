@@ -183,6 +183,35 @@ if (!exists("%||%", mode = "function")) {
 }
 
 
+#' Read clean_occurrences.tsv the way the fingerprint reads it.
+#'
+#' Robust read: real-world clean_occurrences.tsv can contain embedded
+#' newlines/quotes from failed API enrichment (e.g. WoRMS timeout writing a
+#' multi-line error string into a cell). readr::read_tsv tolerates and reports
+#' these instead of hard-failing like utils::read.table. Shared with
+#' tools/seed_input_snapshot.R, which must see the table exactly as here.
+#'
+#' @param src Path to clean_occurrences.tsv.
+#' @return A data.frame: character columns, the fingerprinted numerics numeric.
+read_clean_occurrences <- function(src) {
+  clean_data <- readr::read_tsv(
+    src,
+    col_types = readr::cols(.default = readr::col_character()),
+    quote = "", na = c("", "NA"),
+    progress = FALSE,
+    show_col_types = FALSE
+  )
+  clean_data <- as.data.frame(clean_data, stringsAsFactors = FALSE)
+  # Coerce the numeric columns we actually use for fingerprinting
+  for (.nc in c("longitude", "latitude", "year", "accuracy")) {
+    if (.nc %in% names(clean_data)) {
+      clean_data[[.nc]] <- suppressWarnings(as.numeric(clean_data[[.nc]]))
+    }
+  }
+  clean_data
+}
+
+
 #' Phase 1.5: detect per-species outcomes and populate active_species
 #'
 #' Reads the just-ingested clean_occurrences.tsv from disk, computes a
@@ -235,27 +264,19 @@ detect_species_changes <- function(ctx, clean_data = NULL) {
     if (exists("log_info", mode = "function")) {
       log_info("Reading clean_occurrences from %s", src, module = module)
     }
-    # Robust read: real-world clean_occurrences.tsv can contain embedded
-    # newlines/quotes from failed API enrichment (e.g. WoRMS timeout writing
-    # a multi-line error string into a cell). readr::read_tsv tolerates and
-    # reports these instead of hard-failing like utils::read.table.
-    clean_data <- readr::read_tsv(
-      src,
-      col_types = readr::cols(.default = readr::col_character()),
-      quote = "", na = c("", "NA"),
-      progress = FALSE,
-      show_col_types = FALSE
-    )
-    clean_data <- as.data.frame(clean_data, stringsAsFactors = FALSE)
-    # Coerce the numeric columns we actually use for fingerprinting
-    for (.nc in c("longitude", "latitude", "year", "accuracy")) {
-      if (.nc %in% names(clean_data)) {
-        clean_data[[.nc]] <- suppressWarnings(as.numeric(clean_data[[.nc]]))
-      }
-    }
+    clean_data <- read_clean_occurrences(src)
   }
   if (!"species" %in% names(clean_data)) {
     stop("clean_data has no 'species' column.")
+  }
+
+  # This revision's fingerprint input, kept in the state dir so the next
+  # package of each taxon can say what changed in its input since this one
+  # (00_run_context.R, write_input_snapshot()).
+  snap <- write_input_snapshot(clean_data, ctx$state_dir, ctx$framework_version)
+  if (!is.null(snap) && exists("log_info", mode = "function")) {
+    log_info("Stored the input snapshot of v%s in the state dir.",
+             ctx$framework_version, module = module)
   }
 
   # ── First-run short-circuit ──

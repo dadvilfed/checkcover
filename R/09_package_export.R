@@ -111,7 +111,8 @@ export_species_packages <- function(ctx,
         # AOO stays 0 (zero occupancy is a real quantity). trend is null for an
         # empty block (settles the baseline-null vs "stable" inconsistency).
         return(list(
-          AOO_km2 = 0L, EOO_km2 = NA_integer_, records = 0L,
+          AOO_km2 = 0L, EOO_km2 = NA_integer_, EOO_status = "no_localities",
+          records = 0L,
           basins_count = 0L, countries_count = 0L, countries = list(),
           protected_areas_count = 0L, n_clusters = 0L,
           records_post_2000_pct = NA_real_,
@@ -134,6 +135,12 @@ export_species_packages <- function(ctx,
         # points). 0 would be indistinguishable from a real zero-area range.
         EOO_km2 = if (!is.null(report$metrics$eoo_km2) && is.finite(report$metrics$eoo_km2))
           as.integer(round(report$metrics$eoo_km2)) else NA_integer_,
+        # Why a null EOO is null: "fewer_than_3_localities", or
+        # "exceeds_hemisphere" when no hemisphere contains the localities (the
+        # whole-Earth hull of multi-continent non-native ranges, Lucian 2026-10).
+        # A zero-active report carries none: it has no localities.
+        EOO_status = if (!is.null(report$metrics$eoo_km2) && is.finite(report$metrics$eoo_km2))
+          "computed" else as.character(report$metrics$eoo_status %||% "no_localities"),
         records = report$metrics$n_records %||% 0L,
         basins_count = report$counts$n_hydrobasins %||% 0L,
         countries_count = report$counts$n_countries %||% 0L,
@@ -159,13 +166,11 @@ export_species_packages <- function(ctx,
       )
     }
     
-    # Prior-version AOO + trend now come from the SHARED source in
-    # 00_run_context.R (read_prior_species_aux / compute_trend_vs_previous), so
-    # the narrative (Module 10) computes an identical trend from the same inputs
-    # (Lucian bug 5 — single source of truth). Thin local aliases keep the call
-    # sites below unchanged.
+    # The taxon's previous package comes from the SHARED lookup in
+    # 00_run_context.R (read_prior_species_aux), so the narrative's version
+    # delta (Module 10) reads the same previous values (Lucian bug 5 — single
+    # source of truth).
     .read_prior_aux  <- function(sp_clean) read_prior_species_aux(ctx, sp_clean)
-    .compute_trend_v3 <- compute_trend_vs_previous
     # ────────────────────────────────────────────────────────────────────────
     
     # Per-species output now lives at <root>/<v>/<sp>/ (no run_dir/ middle layer).
@@ -320,14 +325,14 @@ export_species_packages <- function(ctx,
       # Build per-population metric blocks, then patch trends from the manifest data
       ind_block <- .build_pop_metrics_v3(ind_rep)
       non_block <- .build_pop_metrics_v3(non_rep)
-      # Trend is only meaningful when the population is present in the CURRENT
-      # snapshot. For an empty block (records == 0) trend stays NA/null — this is
-      # the single convention for empty blocks (Lucian, 2026-06), removing the
-      # baseline-null vs "stable" inconsistency seen between v1.0 and v1.1.
-      ind_block$trend_vs_previous <- if (isTRUE(ind_block$records > 0))
-        .compute_trend_v3(ind_block$AOO_km2, tax$prior_aoo_indigenous) else NA_character_
-      non_block$trend_vs_previous <- if (isTRUE(non_block$records > 0))
-        .compute_trend_v3(non_block$AOO_km2, tax$prior_aoo_non_indigenous) else NA_character_
+      # trend_vs_previous: the AOO class against the taxon's previous package
+      # (trend_vs_previous_block() in 00_run_context.R). Null for a population
+      # absent now and before; "decrease" when it was present before and has no
+      # active record now (Cambarus veitchorum, AOO 4 -> 0, read null in 1.1).
+      ind_block$trend_vs_previous <- trend_vs_previous_block(
+        ind_block$records, ind_block$AOO_km2, tax$prior_aoo_indigenous)
+      non_block$trend_vs_previous <- trend_vs_previous_block(
+        non_block$records, non_block$AOO_km2, tax$prior_aoo_non_indigenous)
 
       # Zero-basins guard (Lucian bug 4): a basin layer must never ship when
       # basins_count == 0. Module 8 already refrains from generating one for a

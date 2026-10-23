@@ -42,7 +42,7 @@ build <- function(rep) .build_canonical_narrative(
   sp_ind = sp_ind, sp_nind = NULL, ind_report = rep, nind_report = NULL,
   iso_lang = iso, feow_map = NULL, hydrobasin_names = NULL,
   checkover_version = "1.1", output_version = "v1.1", snapshot_date = "2026-07-20",
-  prev_reports_dir = NULL, sp_clean = "Testus_astacus", module = "TEST", ctx = NULL)
+  citations = NULL, sp_clean = "Testus_astacus", module = "TEST", ctx = NULL)
 
 md <- build(mk_report("spatial_clustering"))$full_markdown
 

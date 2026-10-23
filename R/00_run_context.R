@@ -172,6 +172,14 @@ RunContext_init <- function(config, run_id, now = Sys.time()) {
     # <rev>/. Set by the orchestrator once the run directory exists.
     work_dir                = NULL,
 
+    # The persistent state directory (coordinate-bearing, never delivered). It
+    # keeps each revision's fingerprint input (inputs/<v>/), so a later package
+    # can say what changed in its taxon's input since that revision.
+    # NULL (a config without one, as in tests) stores nothing.
+    state_dir               = if (!is.null(config$state_dir) &&
+                                  exists("state_dir_of", mode = "function"))
+                                state_dir_of(config) else config$state_dir,
+
     # Species universe (populated by Phase 1 = ingest, Phase 1.5 = change detection)
     all_species             = NULL,
     active_species          = NULL,
@@ -372,6 +380,46 @@ list_prior_versions <- function(root_dir, current_version = NULL) {
 }
 
 
+#' The fingerprint's view of a record table: its comparison columns, each in
+#' the canonical string form the hash is computed over, rows in input order.
+#'
+#' compute_species_fingerprint() hashes this frame; the per-version input
+#' snapshot stores it, so a record-level comparison sees exactly the
+#' differences the fingerprint sees.
+#'
+#' @param sp_data Records (any number of taxa), post-ingest.
+#' @param columns Comparison columns, `.FINGERPRINT_COLUMNS` by default.
+#' @return A data.frame of character columns.
+fingerprint_frame <- function(sp_data, columns = .FINGERPRINT_COLUMNS) {
+  # The occurrence origin (native/alien) is `status` straight out of ingest and
+  # becomes `status.x` only when the WoRMS taxonomy join adds its own `status`.
+  # Without that join (taxonomy$resolve = FALSE, e.g. the demo) the origin was
+  # silently left out of the fingerprint, so a native<->alien correction went
+  # unseen. Same column, one name.
+  if (!"status.x" %in% names(sp_data) && "status" %in% names(sp_data) &&
+      "status.x" %in% columns) {
+    sp_data$status.x <- sp_data$status
+  }
+
+  # Subset to comparison columns that exist in this slice (preserves `columns` order)
+  available_cols <- intersect(columns, names(sp_data))
+  if (length(available_cols) == 0L) {
+    stop("None of the fingerprint columns are present in sp_data. ",
+         "Expected one or more of: ", paste(columns, collapse = ", "))
+  }
+
+  df <- sp_data[, available_cols, drop = FALSE]
+
+  # Canonicalize per-column
+  df_canon <- as.data.frame(
+    lapply(df, .canonicalize_column),
+    stringsAsFactors = FALSE
+  )
+  names(df_canon) <- available_cols
+  df_canon
+}
+
+
 #' Compute a SHA-256 fingerprint of one species' record set
 #'
 #' Deterministic hash of the per-species data slice, intended as the
@@ -410,31 +458,7 @@ compute_species_fingerprint <- function(sp_data, columns = .FINGERPRINT_COLUMNS)
                   digest::digest("", algo = "sha256", serialize = FALSE)))
   }
 
-  # The occurrence origin (native/alien) is `status` straight out of ingest and
-  # becomes `status.x` only when the WoRMS taxonomy join adds its own `status`.
-  # Without that join (taxonomy$resolve = FALSE, e.g. the demo) the origin was
-  # silently left out of the fingerprint, so a native<->alien correction went
-  # unseen. Same column, one name.
-  if (!"status.x" %in% names(sp_data) && "status" %in% names(sp_data) &&
-      "status.x" %in% columns) {
-    sp_data$status.x <- sp_data$status
-  }
-
-  # Subset to comparison columns that exist in this slice (preserves `columns` order)
-  available_cols <- intersect(columns, names(sp_data))
-  if (length(available_cols) == 0L) {
-    stop("None of the fingerprint columns are present in sp_data. ",
-         "Expected one or more of: ", paste(columns, collapse = ", "))
-  }
-
-  df <- sp_data[, available_cols, drop = FALSE]
-
-  # Canonicalize per-column
-  df_canon <- as.data.frame(
-    lapply(df, .canonicalize_column),
-    stringsAsFactors = FALSE
-  )
-  names(df_canon) <- available_cols
+  df_canon <- fingerprint_frame(sp_data, columns)
 
   # Sort rows for row-order independence. Prefer record_id when it actually
   # distinguishes rows; but the DwC-aligned template omits occurrenceID (assigned
@@ -559,16 +583,158 @@ compute_trend_vs_previous <- function(curr_aoo, prev_aoo) {
   "stable"
 }
 
-#' Prior-version AOO (indigenous + non-indigenous) for a species.
+#' trend_vs_previous of one population block of package_metadata.json.
+#'
+#' The AOO class against the taxon's previous package, as
+#' compute_trend_vs_previous(), with one rule for a population that has no
+#' active record now: "decrease" when it had an AOO in the previous package
+#' (Cambarus veitchorum, 4 -> 0 km², read null in 1.1; Lucian 2026-10), null
+#' when it was absent then too (the empty-block convention, Lucian 2026-06).
+#'
+#' @param curr_records Active records of the population now.
+#' @param curr_aoo,prev_aoo AOO now and in the previous package (NULL = none).
+#' @return "increase", "decrease", "stable" or NA_character_.
+trend_vs_previous_block <- function(curr_records, curr_aoo, prev_aoo) {
+  if (isTRUE(curr_records > 0)) return(compute_trend_vs_previous(curr_aoo, prev_aoo))
+  prev <- suppressWarnings(as.numeric(prev_aoo %||% NA))
+  if (length(prev) == 1L && is.finite(prev) && prev > 0) "decrease" else NA_character_
+}
+
+
+# ---------------------------------------------------------------------------
+# PER-VERSION INPUT SNAPSHOT (what changed in a taxon's input)
+# ---------------------------------------------------------------------------
+# A package reports what changed in its taxon's input since the taxon's
+# previous package: extinction claims added, records added, withdrawn and
+# revised (Lucian, 2026-10). The fingerprint only says THAT something changed.
+# So every run stores its whole fingerprint input, in the fingerprint's
+# canonical form, at <state_dir>/inputs/<version>/fingerprint_input.rds, and
+# the narrative compares the taxon's records there with those of the version
+# its previous package came from. The state dir, never <rev>/: the snapshot
+# carries exact coordinates. It is keyed by version, so a failed run that is
+# retried under the same version simply overwrites its own snapshot, and a
+# version that was never installed is never looked up (lookups follow the
+# installed manifests). Revisions made before this snapshot existed are seeded
+# from their frozen inputs with tools/seed_input_snapshot.R.
+
+input_snapshot_path <- function(state_dir, version) {
+  file.path(state_dir, "inputs", as.character(version), "fingerprint_input.rds")
+}
+
+#' Store a run's fingerprint input in the state dir.
+#'
+#' @param clean_data All records of the run, as the fingerprint reads them.
+#' @return The path written (invisibly), or NULL when there is no state dir.
+write_input_snapshot <- function(clean_data, state_dir, version) {
+  if (is.null(state_dir) || !nzchar(state_dir)) return(invisible(NULL))
+  snap <- fingerprint_frame(clean_data)
+  snap$package_id <- make_package_id(clean_data$species)
+  path <- input_snapshot_path(state_dir, version)
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  tmp <- paste0(path, ".partial")
+  saveRDS(snap, tmp)
+  if (!file.rename(tmp, path)) stop("Could not write the input snapshot ", path)
+  invisible(path)
+}
+
+.input_snapshot_cache <- new.env(parent = emptyenv())
+
+#' A version's stored fingerprint input, or NULL when there is none.
+read_input_snapshot <- function(state_dir, version) {
+  if (is.null(state_dir) || is.null(version)) return(NULL)
+  path <- input_snapshot_path(state_dir, version)
+  if (!file.exists(path)) return(NULL)
+  key <- paste(normalizePath(path, winslash = "/"), file.mtime(path))
+  if (is.null(.input_snapshot_cache[[key]])) {
+    .input_snapshot_cache[[key]] <- tryCatch(readRDS(path), error = function(e) NULL)
+  }
+  .input_snapshot_cache[[key]]
+}
+
+#' What changed in one taxon's input between two snapshots, per population.
+#'
+#' Records are matched by record_id; every comparison is on the fingerprint's
+#' canonical values, so it sees exactly what the fingerprint sees.
+#'   records_added      record_id only in the current input
+#'   records_withdrawn  record_id only in the previous input
+#'   claims_added       extinction claims now present that were not before
+#'                      (on a kept record or on an added one)
+#'   claims_withdrawn   extinction claims present before and not now
+#'   records_revised    kept records with any other compared value changed.
+#'                      The remark that comes with a claim (extinction_remarks)
+#'                      is part of the claim, not a revision: on 1.0 -> 1.1 it
+#'                      made every claimed A. bihariensis record "revised". A
+#'                      remark edited while the claim stands is a revision.
+#' A record counts in the population it belongs to now (withdrawn records: the
+#' one it belonged to), and a revised record that changed population counts in
+#' both, since it changed both.
+#'
+#' @param prev,curr The taxon's rows of two input snapshots.
+#' @return list(indigenous = counts, non_indigenous = counts), or NULL when the
+#'   inputs cannot be compared (a snapshot missing, or record_ids absent or not
+#'   unique).
+compare_taxon_inputs <- function(prev, curr) {
+  if (is.null(prev) || is.null(curr)) return(NULL)
+  ids_ok <- function(d) "record_id" %in% names(d) && !any(d$record_id == "NA") &&
+    !anyDuplicated(d$record_id)
+  if (!ids_ok(prev) || !ids_ok(curr)) return(NULL)
+
+  pop_of <- function(d) {
+    na <- function(v) if (is.null(v)) rep(NA_character_, nrow(d)) else ifelse(v == "NA", NA_character_, v)
+    detect_population_type(data.frame(population_status = na(d$population_status),
+                                      status = na(d$status.x),
+                                      stringsAsFactors = FALSE))
+  }
+  claim_of <- function(d) if ("is_extinct" %in% names(d)) d$is_extinct == "true" else rep(FALSE, nrow(d))
+
+  p_pop <- pop_of(prev); c_pop <- pop_of(curr)
+  p_claim <- stats::setNames(claim_of(prev), prev$record_id)
+  c_claim <- stats::setNames(claim_of(curr), curr$record_id)
+
+  kept      <- intersect(curr$record_id, prev$record_id)
+  pi <- match(kept, prev$record_id); ci <- match(kept, curr$record_id)
+  other <- setdiff(intersect(names(prev), names(curr)),
+                   c("record_id", "is_extinct", "extinction_remarks", "package_id"))
+  changed <- if (length(other) && length(kept))
+    Reduce(`|`, lapply(other, function(k) prev[[k]][pi] != curr[[k]][ci]))
+  else logical(length(kept))
+  if ("extinction_remarks" %in% names(prev) && "extinction_remarks" %in% names(curr) && length(kept)) {
+    same_claim <- p_claim[kept] == c_claim[kept]
+    changed <- changed | (same_claim & prev$extinction_remarks[pi] != curr$extinction_remarks[ci])
+  }
+
+  added_mask     <- !curr$record_id %in% prev$record_id
+  withdrawn_mask <- !prev$record_id %in% curr$record_id
+  claim_add_mask <- c_claim & !(curr$record_id %in% prev$record_id & p_claim[curr$record_id] %in% TRUE)
+  claim_wd_mask  <- p_claim & !(prev$record_id %in% curr$record_id & c_claim[prev$record_id] %in% TRUE)
+
+  count_for <- function(pop) {
+    list(
+      claims_added      = sum(claim_add_mask & c_pop %in% pop),
+      claims_withdrawn  = sum(claim_wd_mask  & p_pop %in% pop),
+      records_added     = sum(added_mask     & c_pop %in% pop),
+      records_withdrawn = sum(withdrawn_mask & p_pop %in% pop),
+      records_revised   = sum(changed & (c_pop[ci] %in% pop | p_pop[pi] %in% pop))
+    )
+  }
+  list(indigenous = count_for("indigenous"), non_indigenous = count_for("non-indigenous"))
+}
+
+#' The taxon's previous package: its version, and the metrics it published.
 #'
 #' Walks ctx$prior_versions (numeric-desc) for the most recent manifest entry
-#' carrying the species, then reads that source version's package_metadata.json
-#' for prior AOO. Returns is_baseline = TRUE when no prior entry exists. This is
-#' the single lookup shared by Module 9 (metadata trend) and Module 10
-#' (narrative trend), so both compute an identical trend.
+#' carrying the species, then reads that entry's SOURCE version's
+#' package_metadata.json. The previous package is therefore the taxon's own
+#' last package, not the previous global release: a taxon packaged in 1.0 and
+#' 1.3 and unchanged since compares 1.8 with 1.3. Returns is_baseline = TRUE
+#' when no prior entry exists. This is the single lookup shared by Module 9
+#' (trend_vs_previous) and Module 10 (the version delta), so both read the same
+#' previous values.
 read_prior_species_aux <- function(ctx, sp_clean) {
   empty <- list(is_baseline = TRUE, previous_version = NULL,
-                prior_aoo_indigenous = NULL, prior_aoo_non_indigenous = NULL)
+                prior_aoo_indigenous = NULL, prior_aoo_non_indigenous = NULL,
+                prior_metrics = NULL, previous_date = NULL,
+                previous_code_version = NULL)
   if (is.null(ctx) || is.null(ctx$prior_versions)) return(empty)
 
   for (v in ctx$prior_versions) {
@@ -589,7 +755,10 @@ read_prior_species_aux <- function(ctx, sp_clean) {
       is_baseline              = FALSE,
       previous_version         = as.character(source_v),
       prior_aoo_indigenous     = prior_pkg$metrics$indigenous$AOO_km2     %||% NULL,
-      prior_aoo_non_indigenous = prior_pkg$metrics$non_indigenous$AOO_km2 %||% NULL
+      prior_aoo_non_indigenous = prior_pkg$metrics$non_indigenous$AOO_km2 %||% NULL,
+      prior_metrics            = prior_pkg$metrics %||% NULL,
+      previous_date            = prior_pkg$snapshot$date %||% NULL,
+      previous_code_version    = prior_pkg$provenance$code_version %||% NULL
     ))
   }
   empty

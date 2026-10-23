@@ -457,16 +457,56 @@ fmt_latlon <- function(lat, lon, digits = 2) {
   paste0(abs(round(lat, digits)), "°", ns, ", ", abs(round(lon, digits)), "°", ew)
 }
 
-# EOO/AOO calculation helpers
-.calc_eoo_val <- function(lon, lat) {
-  coords <- unique(data.frame(lon, lat))
-  coords <- coords[is.finite(coords$lon) & is.finite(coords$lat), ]
-  if (nrow(coords) >= 3) {
-    pts <- sf::st_as_sf(coords, coords = c("lon", "lat"), crs = 4326)
-    return(as.numeric(sf::st_area(sf::st_convex_hull(sf::st_union(pts)))) / 1e6)
-  }
-  return(NA_real_)
+#' Extent of occurrence: area of the convex hull on the sphere, in km².
+#'
+#' THE canonical EOO implementation; the metric modules, the reports, the
+#' temporal module and the EOO map layer all delegate here (eoo_hull()).
+#'
+#' Undefined (NA, never 0) in two cases:
+#'   * fewer than three distinct localities: there is no hull;
+#'   * the hull covers more than a hemisphere. Points that no hemisphere
+#'     contains have no spherical convex hull, and s2 returns the whole sphere:
+#'     510,066,073 km² for the non-native ranges of Procambarus clarkii, Cherax
+#'     destructor, C. quadricarinatus and P. virginalis in 1.0 (Lucian, 2026-10).
+#'     A hull inside one hemisphere is smaller than half the sphere, so area
+#'     above half the sphere means exactly this case.
+#' eoo_status() tells the two apart.
+#'
+#' @param lon,lat Numeric vectors of coordinates in EPSG:4326.
+#' @return EOO in km², or NA_real_.
+CHECKOVER_EARTH_AREA_KM2 <- 4 * pi * 6371.0088^2
+
+calc_eoo_km2 <- function(lon, lat) {
+  hull <- .eoo_hull_xy(lon, lat)
+  if (is.null(hull)) return(NA_real_)
+  area <- as.numeric(sf::st_area(hull)) / 1e6
+  if (!is.finite(area) || area > CHECKOVER_EARTH_AREA_KM2 / 2) NA_real_ else area
 }
+
+#' Why an EOO is or is not defined, for package_metadata EOO_status.
+#'
+#' @param lon,lat Numeric vectors of coordinates.
+#' @param eoo_km2 The EOO already computed for them (calc_eoo_km2()).
+#' @return "computed", "no_localities", "fewer_than_3_localities" or
+#'   "exceeds_hemisphere".
+eoo_status <- function(lon, lat, eoo_km2) {
+  if (length(eoo_km2) == 1L && is.finite(eoo_km2)) return("computed")
+  n <- n_distinct_localities(lon, lat)
+  if (n == 0L) "no_localities"
+  else if (n < 3L) "fewer_than_3_localities"
+  else "exceeds_hemisphere"
+}
+
+.eoo_hull_xy <- function(lon, lat) {
+  keep <- is.finite(lon) & is.finite(lat)
+  coords <- unique(data.frame(lon = lon[keep], lat = lat[keep]))
+  if (nrow(coords) < 3L) return(NULL)
+  pts <- sf::st_as_sf(coords, coords = c("lon", "lat"), crs = 4326)
+  sf::st_convex_hull(sf::st_union(pts))
+}
+
+# Back-compatible name used by 01c_metrics.R. Delegates; no second algorithm.
+.calc_eoo_val <- function(lon, lat) calc_eoo_km2(lon, lat)
 
 #' Text whose Windows-1252 punctuation arrived as C1 control characters.
 #'
@@ -487,6 +527,28 @@ fix_c1_controls <- function(x) {
   x[hit] <- stringi::stri_trans_nfc(
     stringi::stri_replace_all_fixed(x[hit], from, to, vectorize_all = FALSE))
   x
+}
+
+#' A DOI in normalised form, the identity of a work in the bibliography.
+#'
+#' Lower case (DOIs are case-insensitive), without a resolver prefix
+#' ("https://doi.org/", "doi:") or trailing punctuation. NA unless the result
+#' reads "10.<registrant>/<suffix>"; SICI suffixes such as
+#' "0887-3593(2005)024[0386:ROTMEO]2.0.CO;2" are kept whole.
+normalize_doi <- function(x) {
+  x <- as.character(x)
+  out <- rep(NA_character_, length(x))
+  mask <- !is.na(x) & nzchar(trimws(x))
+  if (any(mask)) {
+    d <- tolower(trimws(x[mask]))
+    d <- sub("^https?://(dx\\.)?doi\\.org/", "", d)
+    d <- sub("^(dx\\.)?doi\\.org/", "", d)
+    d <- sub("^doi:?\\s*", "", d)
+    d <- trimws(sub("[.,;]+$", "", d))
+    d[!grepl("^10\\.[0-9]{4,9}/\\S+$", d)] <- NA_character_
+    out[mask] <- d
+  }
+  out
 }
 
 #' Sentences joined by one space, skipping the empty ones.
@@ -521,6 +583,9 @@ n_distinct_localities <- function(lon, lat) {
 #' taxa, one corner up to 1.9 degrees from any record, while their metadata
 #' and narratives said EOO undefined.
 #'
+#' The same holds above a hemisphere: s2 returns the whole sphere as the hull,
+#' and calc_eoo_km2() calls that EOO undefined, so no layer is drawn either.
+#'
 #' @param pts An sf of points.
 #' @return The convex hull (sfc), or NULL when the EOO is undefined.
 eoo_hull <- function(pts) {
@@ -529,6 +594,8 @@ eoo_hull <- function(pts) {
   xy <- unique(xy[is.finite(xy[, 1]) & is.finite(xy[, 2]), , drop = FALSE])
   if (nrow(xy) < 3L) return(NULL)
   hull <- sf::st_convex_hull(sf::st_union(pts))
+  area <- as.numeric(sf::st_area(hull)) / 1e6
+  if (!is.finite(area) || area > CHECKOVER_EARTH_AREA_KM2 / 2) return(NULL)
   if (!all(sf::st_is_valid(hull))) hull <- sf::st_make_valid(hull)
   hull
 }

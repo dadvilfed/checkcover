@@ -22,17 +22,7 @@ compute_species_metrics <- function(cd) {
   
   dplyr::group_by(cd, species) %>%
     dplyr::summarise(
-      eoo_km2 = {
-        coords <- unique(data.frame(lon = longitude, lat = latitude))
-        if (nrow(coords) >= 3) {
-          hull <- sf::st_convex_hull(sf::st_union(sf::st_as_sf(
-            coords, coords = c("lon", "lat"), crs = 4326
-          )))
-          as.numeric(sf::st_area(hull)) / 1e6
-        } else {
-          NA_real_
-        }
-      },
+      eoo_km2 = calc_eoo_km2(longitude, latitude),
       # One equal-area implementation for the whole workflow; see
       # calc_aoo_km2() in 00_helpers.R.
       aoo_km2 = calc_aoo_km2(longitude, latitude),

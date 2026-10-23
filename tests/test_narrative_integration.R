@@ -48,7 +48,7 @@ can <- .build_canonical_narrative(
   sp_ind = sp_ind, sp_nind = NULL, ind_report = ind_report, nind_report = NULL,
   iso_lang = iso, feow_map = NULL, hydrobasin_names = NULL,
   checkover_version = "1.1", output_version = "v1.1",
-  snapshot_date = "2026-07-11", prev_reports_dir = NULL,
+  snapshot_date = "2026-07-11", citations = NULL,
   sp_clean = "Testus_astacus", module = "TEST", ctx = NULL
 )
 
@@ -95,7 +95,7 @@ can2 <- .build_canonical_narrative(
   sp_ind = sp_ind, sp_nind = NULL, ind_report = ind_report2, nind_report = NULL,
   iso_lang = iso, feow_map = NULL, hydrobasin_names = hb_lookup,
   checkover_version = "1.1", output_version = "v1.1",
-  snapshot_date = "2026-07-11", prev_reports_dir = NULL,
+  snapshot_date = "2026-07-11", citations = NULL,
   sp_clean = "Testus_astacus", module = "TEST", ctx = NULL
 )
 tmp2 <- file.path(tempdir(), "auditpkg_it2"); unlink(tmp2, recursive = TRUE)

@@ -366,8 +366,9 @@ Rewritten at every phase of the run, and once at the end.
 | `revision_dir`, `code_version` | succeeded | |
 
 The phases, in order: `startup`, `ingest`, `full_cohort_enrichment`,
-`change_detection`, `indigenous_branch`, `non_indigenous_branch`,
-`merge_and_narratives`, `temporal`, `maps`, `citations`, `export`. The first
+`change_detection`, `indigenous_branch`, `non_indigenous_branch`, `citations`,
+`merge_and_narratives`, `temporal`, `maps`, `export` (`citations` precedes the
+narratives, which state the bibliography's figures). The first
 four run on the whole input whatever the scope, so they are the fixed cost of
 a run.
 
@@ -487,7 +488,7 @@ installing. The detail blocks name files and reasons, never coordinates.
 | Field | |
 |---|---|
 | `species`, `package_id` | display name and folder name |
-| `status`, `scenario`, `metrics` | the results |
+| `status`, `scenario`, `metrics` | the results; per population, `EOO_status` says why a null `EOO_km2` is null (`fewer_than_3_localities`, `exceeds_hemisphere`, `no_localities`), and `trend_vs_previous` is the AOO change class against the taxon's previous package (±5 %; `decrease` when the population has no active record left; null for its first package or a population absent then and now) |
 | `provenance.framework_version` | the revision (string) |
 | `provenance.code_version` | the code that computed it |
 | `provenance.license` | `CC-BY-4.0` |

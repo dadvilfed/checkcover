@@ -814,9 +814,54 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("\n")
   
   # ============================================================
+  # PHASE 6: CITATION MANAGEMENT
+  # ============================================================
+  # Before the narratives (it used to follow the maps): section 4.4 of each
+  # narrative states the bibliography's own reference count and DOIs, so the
+  # bibliography must exist first (Lucian, 2026-10). It reads only the records,
+  # nothing the merge, the temporal phase or the maps produce.
+
+  cat("\n")
+  cat("==============================================================\n")
+  cat("   PHASE 6: CITATION MANAGEMENT                              \n")
+  cat("==============================================================\n")
+  cat("\n")
+
+  summary_file <- file.path(run_env$run_dir, "reports", "dataset_summary_statistics.json")
+  methods <- if (file.exists(summary_file)) {
+    jsonlite::read_json(summary_file, simplifyVector = TRUE)$methods
+  } else {
+    list(
+      taxonomy = "WoRMS via worrms package",
+      vernacular = "Manual dictionary",
+      continents = "Natural Earth medium scale",
+      gadm = "GADM v4.1",
+      teow = "ecoregions::worldecoregions",
+      feow = "Local FEOW shapefile",
+      wdpa = "wdpar package (cached)",
+      hydrobasins = "Local HydroBASINS shapefiles (L6/L8/L10)"
+    )
+  }
+
+  mark_phase("citations")
+  cat("\n[MODULE 7] Generating citations for all species...\n")
+
+  # Every reference is tagged from the record itself ("extinction_evidence" for
+  # a record with an extinction claim, else "baseline"); no record-level tags
+  # come from elsewhere.
+  all_citations <- generate_all_citations(
+    scenario_table = scenario_table,
+    result_indigenous = result_indigenous,
+    result_non_indigenous = result_non_indigenous,
+    output_dir = run_env$run_dir,
+    script_run_time = Sys.time(),
+    methods = methods
+  )
+
+  # ============================================================
   # PHASE 4: MERGE SCENARIO 3 SPECIES
   # ============================================================
-  
+
   cat("\n")
   cat("==============================================================\n")
   cat("   PHASE 4: MERGE SCENARIO 3 SPECIES                         \n")
@@ -864,11 +909,11 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("Merged Reports (Scenario 3):\n")
   cat("  Merged species:", length(scenario3_merged$merged_species), "files\n")
   cat("\n")
-  
+
   # ============================================================
   # PHASE 5B: CANONICAL NARRATIVE GENERATION
   # ============================================================
-  
+
   cat("\n")
   cat("==============================================================\n")
   cat("   PHASE 5B: CANONICAL NARRATIVE GENERATION                  \n")
@@ -892,9 +937,11 @@ if (run_env$status %in% c("NEW", "RESUME")) {
     # (Lucian bug 0). package_metadata / SEB already use this same value.
     checkover_version = ctx$framework_version,
     output_version    = paste0("v", ctx$framework_version),
-    # Pass the RunContext so the narrative trend reads the SAME prior-version AOO
-    # as package_metadata.json (single-source trend, Lucian bug 5).
-    ctx               = ctx
+    # Pass the RunContext so the version delta reads the SAME previous package
+    # as package_metadata.json, and the input snapshots in the state dir.
+    ctx               = ctx,
+    # Section 4.4 is bound to the bibliography (Module 7, above).
+    citations         = all_citations
   )
   
   cat("\n")
@@ -1085,60 +1132,8 @@ if (run_env$status %in% c("NEW", "RESUME")) {
   cat("Formats: GeoJSON, KML\n")
   cat("\n")
   
-  # ============================================================
-  # PHASE 6: CITATION MANAGEMENT
-  # ============================================================
-  
-  cat("\n")
-  cat("==============================================================\n")
-  cat("   PHASE 6: CITATION MANAGEMENT                              \n")
-  cat("==============================================================\n")
-  cat("\n")
-  
-  methods <- NULL   # ← ADD THIS LINE
+  # (Phase 6, citation management, runs before the narratives: see above.)
 
-  # Load methods from summary if not already defined
-  if (is.null(methods)) {
-    summary_file <- file.path(run_env$run_dir, "reports", "dataset_summary_statistics.json")
-    if (file.exists(summary_file)) {
-      summary_data <- jsonlite::read_json(summary_file, simplifyVector = TRUE)
-      methods <- summary_data$methods
-    } else {
-      methods <- list(
-        taxonomy = "WoRMS via worrms package",
-        vernacular = "Manual dictionary",
-        continents = "Natural Earth medium scale",
-        gadm = "GADM v4.1",
-        teow = "ecoregions::worldecoregions",
-        feow = "Local FEOW shapefile",
-        wdpa = "wdpar package (cached)",
-        hydrobasins = "Local HydroBASINS shapefiles (L6/L8/L10)"
-      )
-    }
-  }
-  
-  mark_phase("citations")
-  cat("\n[MODULE 7] Generating citations for all species...\n")
-  
-  # Pass temporal record tags if available (from Phase 5C)
-  # On first run with no temporal changes, this is an empty data.frame
-  # → all references tagged "baseline".
-  temporal_tags_for_citations <- if (exists("temporal_record_tags") &&
-                                     is.data.frame(temporal_record_tags) &&
-                                     nrow(temporal_record_tags) > 0L) {
-    temporal_record_tags
-  } else NULL
-  
-  all_citations <- generate_all_citations(
-    scenario_table = scenario_table,
-    result_indigenous = result_indigenous,
-    result_non_indigenous = result_non_indigenous,
-    output_dir = run_env$run_dir,
-    script_run_time = Sys.time(),
-    methods = methods,
-    temporal_record_tags = temporal_tags_for_citations
-  )
-  
   # ============================================================
   # PHASE 7: SPECIES PACKAGE EXPORT
   # ============================================================

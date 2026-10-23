@@ -249,25 +249,15 @@ load_previous_version <- function(species_clean,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# DEFAULT EOO/AOO HELPERS (mirror those in 03a_metrics_indigenous.R)
-# Kept here as standalone copies so this module is self-contained for testing.
+# DEFAULT EOO/AOO HELPERS (the same functions as 03a_metrics_indigenous.R)
 # ──────────────────────────────────────────────────────────────────────────────
 
-.calc_eoo_default <- function(lon, lat) {
-  coords <- unique(data.frame(lon = lon, lat = lat))
-  coords <- coords[is.finite(coords$lon) & is.finite(coords$lat), ]
-  if (nrow(coords) >= 3L) {
-    pts  <- sf::st_as_sf(coords, coords = c("lon", "lat"), crs = 4326)
-    hull <- sf::st_convex_hull(sf::st_union(pts))
-    return(as.numeric(sf::st_area(hull)) / 1e6)  # km²
-  }
-  NA_real_
-}
+# Both delegate to 00_helpers.R. Critically, the temporal delta compares a
+# CURRENT metric against one stored in a previous version, so a different
+# algorithm here would measure the difference between two algorithms rather
+# than a change in the data.
+.calc_eoo_default <- function(lon, lat) calc_eoo_km2(lon, lat)
 
-# Delegates to calc_aoo_km2() in 00_helpers.R. Critically, the temporal delta
-# compares a CURRENT AOO against one stored in a previous version, so if this
-# used a different lattice from the metrics modules the delta would measure the
-# difference between two algorithms rather than a change in the data.
 .calc_aoo_default <- function(lon, lat) calc_aoo_km2(lon, lat)
 
 

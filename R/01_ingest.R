@@ -624,6 +624,51 @@ order_for_consolidation <- function(df) {
   do.call(order, c(cols, list(na.last = TRUE, method = "radix")))
 }
 
+#' Separators of sources_all: one source per SOURCES_SEP, its citation, DOI
+#' and URL split by SOURCES_FIELD_SEP. ASCII record and unit separators, which
+#' no citation contains and the TSV scrub in ingest_clean() leaves alone.
+SOURCES_SEP       <- "\x1e"
+SOURCES_FIELD_SEP <- "\x1f"
+
+#' Every distinct (citation, DOI, URL) of each duplicate group, as one string.
+#'
+#' citation_all, doi_all and url_all hold the group's distinct values of each
+#' column separately, so which DOI belongs to which citation is lost: Module 7
+#' gave every expanded citation the survivor's DOI, and A. bihariensis REF_005
+#' (Satmari et al. 2023, NeoBiota) carried Pârvulescu 2019's DOI in 1.0 and 1.1
+#' although its own records carry 10.3897/neobiota.89.110085 (Lucian, 2026-10).
+#' This column keeps each record's three values together. It is not
+#' fingerprinted: the fingerprint already sees every citation, DOI and URL of
+#' the group through the *_all columns.
+#'
+#' @param clean_data Records in consolidation order.
+#' @param dup_key The duplicate key of each row.
+#' @return Character vector, one encoded source list per row (that of its group).
+.sources_by_group <- function(clean_data, dup_key) {
+  col <- function(k) {
+    v <- if (k %in% names(clean_data)) trimws(as.character(clean_data[[k]])) else rep(NA_character_, nrow(clean_data))
+    v[is.na(v)] <- ""
+    v
+  }
+  src <- paste(col("citation"), col("doi"), col("url"), sep = SOURCES_FIELD_SEP)
+  empty <- paste0(SOURCES_FIELD_SEP, SOURCES_FIELD_SEP)
+  per_group <- vapply(split(src, dup_key), function(s) {
+    s <- unique(s[s != empty])
+    if (length(s)) paste(s, collapse = SOURCES_SEP) else NA_character_
+  }, character(1))
+  unname(per_group[dup_key])
+}
+
+#' The sources of one record as a data.frame (citation, doi, url; "" = none).
+decode_sources <- function(x) {
+  if (is.na(x) || !nzchar(x))
+    return(data.frame(citation = NA_character_, doi = NA_character_, url = NA_character_,
+                      stringsAsFactors = FALSE))
+  f <- strsplit(strsplit(x, SOURCES_SEP, fixed = TRUE)[[1]], SOURCES_FIELD_SEP, fixed = TRUE)
+  get <- function(i) vapply(f, function(p) if (length(p) >= i && nzchar(p[i])) p[i] else NA_character_, "")
+  data.frame(citation = get(1), doi = get(2), url = get(3), stringsAsFactors = FALSE)
+}
+
 #' Collapse duplicate records (species + coordinates + year), keeping every
 #' citation, DOI and URL of the group on the survivor in *_all columns.
 #'
@@ -666,6 +711,7 @@ consolidate_duplicates <- function(clean_data) {
   clean_data$n_sources    <- lengths(strsplit(
     ifelse(is.na(clean_data$citation_all), "", clean_data$citation_all),
     "\\s*\\|\\s*"))
+  clean_data$sources_all  <- .sources_by_group(clean_data, dup_key)
 
   keep <- !duplicated(dup_key)            # first row of each group, in the fixed order
   out <- clean_data[keep, , drop = FALSE]

@@ -241,6 +241,64 @@ audit_narrative_metadata_consistency <- function(version_dir) {
     if (isTRUE(ext_ct > 0) && !grepl("extinct|extirpat", both, ignore.case = TRUE))
       problems <- c(problems, sprintf("extinctions_count=%s but narrative never mentions extinction/extirpation", ext_ct))
 
+    # --- Lucian's SEB review (2026-10): none of these may reach a package ---
+    # Wording that stated a difference between packages as a trend, a fixed
+    # caveat, a bare flag and a sentence section 4 contradicts.
+    retired <- c(
+      "Current trend:"                                   = "a 'Current trend' line in the version delta",
+      "Trend reflects data updates"                      = "the fixed trend caveat",
+      "range exhibits decline"                           = "trend wording in section 5",
+      "range extent remains stable"                      = "trend wording in section 5",
+      "Native range shows expansion"                     = "trend wording in section 5",
+      "Alien range"                                      = "trend wording in section 5",
+      "Alien populations continue expanding"             = "trend wording in section 5",
+      "not yet tracked at per-species level"             = "the obsolete 'not yet tracked' sentence")
+    for (k in names(retired))
+      if (grepl(k, both, fixed = TRUE)) problems <- c(problems, sprintf("narrative carries %s", retired[[k]]))
+    if (grepl("**Locality:** TRUE", both, fixed = TRUE) || grepl("**Locality:** FALSE", both, fixed = TRUE))
+      problems <- c(problems, "type locality printed as a bare TRUE/FALSE flag")
+
+    # --- section 4.4 = the package's bibliography ---
+    bj_path <- list.files(file.path(d, "citations"), pattern = "_bibliography\\.json$", full.names = TRUE)[1]
+    bj <- if (!is.na(bj_path)) tryCatch(jsonlite::read_json(bj_path, simplifyVector = FALSE),
+                                        error = function(e) NULL) else NULL
+    narr_refs <- .grab(md, "\\*\\*Total references:\\*\\* ([0-9,]+)")
+    meta_refs <- if (is.null(bj)) 0 else .num(bj$totals$total_references)
+    if (.mismatch(meta_refs, narr_refs))
+      problems <- c(problems, sprintf("Total references: narrative %s vs bibliography %s", narr_refs, meta_refs))
+    refs <- bj$references %||% list()
+    if (length(refs) && all(vapply(refs, function(r) "doi" %in% names(r), logical(1)))) {
+      b_dois <- sort(unique(unlist(lapply(refs, function(r) r$doi))))
+      m <- regmatches(md, regexec("\\*\\*DOI-linked references:\\*\\* ([^\n]*)", md))[[1]]
+      n_dois <- if (length(m) >= 2 && m[2] != "none") sort(unique(trimws(strsplit(m[2], ";")[[1]]))) else character(0)
+      if (!identical(n_dois, b_dois))
+        problems <- c(problems, sprintf("DOI-linked references: narrative lists %d, bibliography %d",
+                                        length(n_dois), length(b_dois)))
+    }
+
+    # --- version delta: the current side equals this package's metadata ---
+    for (sec in list(list(h = "### 4.2 Version delta: indigenous range", b = ind),
+                     list(h = "### 4.3 Version delta: non-indigenous range", b = non))) {
+      at <- regexpr(sec$h, md, fixed = TRUE)
+      if (at < 0) next
+      blk <- substr(md, at, nchar(md))
+      nxt <- regexpr("\n#", substr(blk, 2, nchar(blk)))
+      if (nxt > 0) blk <- substr(blk, 1, nxt)
+      cur <- function(label) {
+        m <- regmatches(blk, regexec(paste0("\\*\\*", label, ":\\*\\* [^\n]*→ ([0-9,]+|undefined)"), blk))[[1]]
+        if (length(m) < 2) NA_character_ else m[2]
+      }
+      for (f in list(c("Records", "records"), c("AOO", "AOO_km2"), c("EOO", "EOO_km2"),
+                     c("Documented local extinctions", "extinctions_count"))) {
+        got <- cur(f[1]); want <- .num(sec$b[[f[2]]])
+        bad <- if (is.na(got)) TRUE
+               else if (got == "undefined") !is.na(want)
+               else is.na(want) || .mismatch(want, .num(got))
+        if (bad) problems <- c(problems, sprintf("%s, %s now: narrative %s vs metadata %s",
+                                                 substring(sec$h, 5), f[1], got, sec$b[[f[2]]] %||% "null"))
+      }
+    }
+
     # --- narrative-internal consistency: the basin-UNIT figure, if repeated,
     #     must agree (named-basin figures are a separate quantity, not checked).
     all_basins <- .grab_all(both, "([0-9,]+) hydrographic basin unit")

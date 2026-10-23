@@ -116,7 +116,8 @@ if (length(jf)) {
 }
 
 # Without expansion only one of the three would have survived -- the defect.
-no_all <- con; no_all$citation_all <- NULL
+# (sources_all carries the same sources, each with its own DOI and URL.)
+no_all <- con; no_all$citation_all <- NULL; no_all$sources_all <- NULL
 out2 <- file.path(tempdir(), paste0("cit2_", as.integer(runif(1) * 1e8)))
 dir.create(out2, recursive = TRUE, showWarnings = FALSE)
 quiet(try(generate_all_citations(
@@ -134,23 +135,23 @@ if (length(jf2)) {
      "without citation_all the bibliography loses sources (the defect)")
 }
 
-# ---- the geo-narrative's bibliography must see them too ----
-# Module 7 was updated to expand citation_all; the narrative's bibliography
-# section was not, and kept reading the survivor-only `citation` column. The two
-# representations in one package then disagreed on how many sources exist.
-src <- readLines("R/10_canonical_narratives.R", warn = FALSE)
-i1 <- grep("^\\.narrative_sources <- function", src)[1]
-i2 <- grep("^\\.freq_table_multi <- function", src)[1]
-i2 <- max(grep("^#'", src[seq_len(i2 - 1)])[1], i1 + 1)
-blk_end <- which(src == "}" & seq_along(src) > i1)[1]
-eval(parse(text = paste(src[i1:blk_end], collapse = "\n")))
-
-cites <- .narrative_sources(con, "citation")
-ok(setequal(unique(cites), c("Smith 1999", "Jones 2003", "Brown 2010", "Solo 2020")),
-   "narrative bibliography sees all four sources, not just survivors")
-ok(length(unique(.narrative_sources(no_all, "citation"))) == 2,
-   "without citation_all it falls back to the survivor column (pre-change data)")
-ok(length(.narrative_sources(NULL, "citation")) == 0, "NULL branch -> no sources")
+# ---- the geo-narrative states the bibliography's own figures ----
+# Section 4.4 counted the records' distinct DOI strings plus their distinct
+# citation strings (7 + 8 = 15 for A. bihariensis, whose bibliography holds 8
+# references). It now reads the package's bibliography, so the two cannot
+# disagree (Lucian, 2026-10).
+suppressWarnings(suppressMessages(source("R/10_canonical_narratives.R")))
+cit_obj <- res$citations[["Astacus astacus"]]
+sec4 <- .build_section4("Astacus astacus", con, NULL, list(metrics = list(n_records = 2L)), NULL,
+                        "1.1", "v1.1", "2026-10-23", delta = NULL, citations = cit_obj)
+bj <- jsonlite::fromJSON(cit_obj$bibliography_json, simplifyVector = FALSE)
+ok(grepl(sprintf("**Total references:** %d\n", bj$totals$total_references), sec4, fixed = TRUE),
+   "4.4 Total references = the bibliography's totals.total_references")
+ok(grepl("**DOI-linked references:** none", sec4, fixed = TRUE),
+   "4.4 lists the bibliography's DOIs (none here)")
+ok(grepl("**Total references:** 0\n",
+         .build_section4("X", NULL, NULL, NULL, NULL, "1.1", "v1.1", "2026-10-23"), fixed = TRUE),
+   "no bibliography -> 0 references")
 
 unlink(c(out, out2), recursive = TRUE)
 cat(sprintf("\n[test_citation_retention] %d passed, %d failed\n", pass, fail))

@@ -34,29 +34,15 @@ generate_all_citations <- function(scenario_table,
       trimws(x)
     }
     
-    .norm_doi <- function(x) {
-      x <- as.character(x)
-      out <- rep(NA_character_, length(x))
-      mask <- !is.na(x) & nzchar(x)
-      if (any(mask)) {
-        d <- tolower(x[mask])
-        d <- sub("^https?://(dx\\.)?doi\\.org/", "", d)
-        d <- sub("^doi:\\s*", "", d)
-        d <- trimws(d)
-        d[!grepl("^10\\.", d)] <- NA_character_
-        out[mask] <- d
-      }
-      out
-    }
-    
+    .norm_doi <- function(x) normalize_doi(x)
+
     .detect_doi <- function(txt) {
       txt <- as.character(txt)
       out <- rep(NA_character_, length(txt))
       mask <- !is.na(txt) & nzchar(txt)
       if (any(mask)) {
         m <- stringr::str_extract(txt[mask], "(?i)10\\.\\d{4,9}/[-._;()/:A-Z0-9]+")
-        m <- tolower(m)
-        out[mask] <- m
+        out[mask] <- normalize_doi(m)
       }
       out
     }
@@ -81,6 +67,27 @@ generate_all_citations <- function(scenario_table,
       sub("\\.$", "", t)
     }
     
+    # Most frequent non-NA value, ties to the first in sort order; NA if none.
+    .modal <- function(x) {
+      x <- x[!is.na(x) & nzchar(x)]
+      if (!length(x)) return(NA_character_)
+      tab <- table(x)
+      names(tab)[tab == max(tab)][1]
+    }
+
+    # Rows of one citation text that lack a DOI take the text's DOI (its most
+    # frequent one on the other rows), so a work is not split by the records
+    # that omit it. Rows that carry a DOI keep their own.
+    .fill_doi_by_citation <- function(cit, doi) {
+      miss <- is.na(doi) & !is.na(cit) & nzchar(cit)
+      if (!any(miss)) return(doi)
+      known <- !is.na(doi) & !is.na(cit)
+      if (!any(known)) return(doi)
+      by_cit <- vapply(split(doi[known], cit[known]), .modal, "")
+      doi[miss] <- unname(by_cit[cit[miss]])
+      doi
+    }
+
     .year_from_citation <- function(cit) {
       y <- stringr::str_extract(cit, "(19|20)\\d{2}")
       suppressWarnings(as.integer(y))
@@ -92,7 +99,7 @@ generate_all_citations <- function(scenario_table,
     # (see 01_ingest.R). It must be in this list or .safe_cols() drops it before
     # the expansion below can see it, and the retained citations are lost again.
     cols_needed <- c("species", "record_id", "citation", "doi", "url", "is_extinct",
-                     "citation_all", "doi_all", "url_all")
+                     "citation_all", "doi_all", "url_all", "sources_all")
     .safe_cols <- function(df, cols) {
       present <- intersect(cols, names(df))
       df[, present, drop = FALSE]
@@ -180,15 +187,37 @@ generate_all_citations <- function(scenario_table,
       # occurrence rather than only whichever row happened to survive -- without
       # changing any record count, because the expansion is local to this module
       # (Lucian, 2026-09).
-      if ("citation_all" %in% names(sp_data) &&
-          any(grepl("|", sp_data$citation_all, fixed = TRUE), na.rm = TRUE)) {
+      #
+      # Each source keeps its OWN DOI and URL (sources_all, 01_ingest.R). The
+      # earlier expansion replaced only the citation and left every row with
+      # the survivor's DOI, which is how Satmari et al. 2023 got Pârvulescu
+      # 2019's DOI (Lucian, 2026-10). Records from before sources_all existed
+      # expand citation_all as before, with no DOI or URL on the sources that
+      # are not the survivor's: none is better than another work's.
+      n_before <- nrow(sp_data)
+      if ("sources_all" %in% names(sp_data)) {
+        parts <- lapply(sp_data$sources_all, decode_sources)
+        reps  <- vapply(parts, nrow, integer(1))
+        sp_data <- sp_data[rep(seq_len(nrow(sp_data)), reps), , drop = FALSE]
+        flat <- do.call(rbind, parts)
+        sp_data$citation <- flat$citation
+        sp_data$doi      <- flat$doi
+        sp_data$url      <- flat$url
+      } else if ("citation_all" %in% names(sp_data) &&
+                 any(grepl("|", sp_data$citation_all, fixed = TRUE), na.rm = TRUE)) {
         parts <- strsplit(ifelse(is.na(sp_data$citation_all), "",
                                  sp_data$citation_all), "\\s*\\|\\s*")
         reps  <- pmax(lengths(parts), 1L)
-        n_before <- nrow(sp_data)
+        own   <- .str_clean(sp_data$citation)
         sp_data <- sp_data[rep(seq_len(nrow(sp_data)), reps), , drop = FALSE]
         flat <- unlist(lapply(parts, function(p) if (length(p)) p else NA_character_))
+        own_rep <- own[rep(seq_along(reps), reps)]
+        not_own <- !is.na(flat) & (is.na(own_rep) | .str_clean(flat) != own_rep)
         sp_data$citation <- flat
+        sp_data$doi[not_own] <- NA_character_
+        sp_data$url[not_own] <- NA_character_
+      }
+      if (nrow(sp_data) != n_before) {
         log_info("  %s: expanded %d consolidated record(s) to %d citation row(s)",
                  sp, n_before, nrow(sp_data), module = module)
       }
@@ -218,8 +247,6 @@ generate_all_citations <- function(scenario_table,
       doi_guess <- .detect_doi(sp_data$citation)
       fill_mask <- is.na(doi_id) | !nzchar(doi_id)
       doi_id[fill_mask] <- .norm_doi(doi_guess[fill_mask])
-      doi_link <- ifelse(!is.na(doi_id) & nzchar(doi_id),
-                         paste0("https://doi.org/", doi_id), NA_character_)
       
       # ── Normalize URL ──
       url_clean <- .str_clean(sp_data$url)
@@ -230,7 +257,7 @@ generate_all_citations <- function(scenario_table,
       # ── Work frame (one row per record, BEFORE dedup) ──
       work_df <- data.frame(
         citation_clean = .str_clean(sp_data$citation),
-        doi_id = doi_id, doi_link = doi_link, url_clean = url_clean,
+        doi_id = doi_id, url_clean = url_clean,
         source_type = sp_data$source_type,
         stringsAsFactors = FALSE
       )
@@ -242,53 +269,41 @@ generate_all_citations <- function(scenario_table,
       unpublished_count <- nrow(unpub_rows)
       
       # ── Count + dedup for published ──
+      # One reference per WORK. A work is its normalised DOI when it has one,
+      # else its citation text (else its URL). Keyed on the text alone, one
+      # paper written in several citation styles became several references:
+      # 219 DOIs sat under two or more REF ids across 1.0, five of them for
+      # A. astacus' 10.2478/v10191-010-0007-6 (Lucian, 2026-10). A row whose
+      # text has no DOI first takes the DOI that the same text carries on its
+      # other rows, so records that omit the DOI do not split a work off.
+      # Counts add up, source types are united, and the work is shown under
+      # its most frequent citation text and URL.
+      #
+      # Every row has a key, so a count is never NA: keying on the text alone
+      # dropped rows with no citation from table() and emitted count = NA (the
+      # Cherax cartalacoolah crash of 2026-08 came from that path).
       if (nrow(pub_rows) > 0) {
-        pub_rows$dedup_key <- pub_rows$citation_clean
-
-        # table() drops NA by default, so a species whose published citations
-        # are ALL NA yields a 0-level table — and as.data.frame() of a 0-level
-        # table collapses to a SINGLE "Freq" column, so naming two columns died
-        # with:
-        #   'names' attribute [2] must be the same length as the vector [1]
-        # Hit on Cherax cartalacoolah (2026-08) once force_reprocess put the
-        # whole cohort through this module; the 501 previously-"unchanged"
-        # species had never reached it. Nothing about the data was new — the
-        # code path simply had not been exercised.
-        #
-        # Build the frame explicitly so its shape cannot depend on the data.
-        # Rows with an NA citation still fall through the merge below with
-        # count = NA, which is exactly how species with a MIX of NA and real
-        # citations already behave in v1.0/v1.1 (13 such species in v1.1). So
-        # no species that worked before changes output.
-        key_tab   <- table(pub_rows$dedup_key, useNA = "no")
-        count_tbl <- data.frame(
-          dedup_key = if (length(key_tab)) names(key_tab)      else character(0),
-          count     = if (length(key_tab)) as.integer(key_tab) else integer(0),
+        pub_rows$doi_id <- .fill_doi_by_citation(pub_rows$citation_clean, pub_rows$doi_id)
+        has_cit <- !is.na(pub_rows$citation_clean) & nzchar(pub_rows$citation_clean)
+        pub_rows$dedup_key <- ifelse(!is.na(pub_rows$doi_id), paste0("doi:", pub_rows$doi_id),
+                              ifelse(has_cit, paste0("cit:", pub_rows$citation_clean),
+                                     paste0("url:", pub_rows$url_clean)))
+        groups <- split(seq_len(nrow(pub_rows)), pub_rows$dedup_key)
+        pub_dedup <- data.frame(
+          citation_clean = vapply(groups, function(ix) .modal(pub_rows$citation_clean[ix]), ""),
+          doi_id         = vapply(groups, function(ix) pub_rows$doi_id[ix[1]], ""),
+          url_clean      = vapply(groups, function(ix) .modal(pub_rows$url_clean[ix]), ""),
+          count          = vapply(groups, length, integer(1)),
           stringsAsFactors = FALSE
         )
-
-        if (nrow(count_tbl) == 0L) {
-          # Visible rather than silent: the species will still get a reference
-          # entry, but with a NULL citation and NULL count.
-          log_warn(paste0("  %s: no usable citation on any of %d published record(s) — ",
-                          "reference emitted with count=NA"),
-                   sp, nrow(pub_rows), module = module)
-        }
-
-        source_types_map <- tapply(
-          pub_rows$source_type, pub_rows$dedup_key,
-          function(x) sort(unique(x)), simplify = FALSE
-        )
-
-        pub_dedup <- pub_rows[!duplicated(pub_rows$dedup_key), , drop = FALSE]
-        pub_dedup <- merge(pub_dedup, count_tbl, by = "dedup_key", all.x = TRUE)
-        pub_dedup$source_types <- source_types_map[pub_dedup$dedup_key]
-        pub_dedup$dedup_key    <- NULL
-        pub_dedup$source_type  <- NULL
+        pub_dedup$source_types <- lapply(groups, function(ix) sort(unique(pub_rows$source_type[ix])))
+        # Text order before the count sort below, so tied works keep the
+        # alphabetical order they always had.
+        pub_dedup <- pub_dedup[order(pub_dedup$citation_clean, names(groups), na.last = TRUE), , drop = FALSE]
       } else {
         pub_dedup <- data.frame(
           citation_clean = character(0), doi_id = character(0),
-          doi_link = character(0), url_clean = character(0),
+          url_clean = character(0),
           count = integer(0), stringsAsFactors = FALSE
         )
         pub_dedup$source_types <- list()
@@ -299,7 +314,7 @@ generate_all_citations <- function(scenario_table,
         unpub_st <- sort(unique(unpub_rows$source_type))
         unpub_entry <- data.frame(
           citation_clean = "Unpublished",
-          doi_id = NA_character_, doi_link = NA_character_,
+          doi_id = NA_character_,
           url_clean = NA_character_, count = unpublished_count,
           stringsAsFactors = FALSE
         )
@@ -317,15 +332,16 @@ generate_all_citations <- function(scenario_table,
       }
       
       # ── APA format with DOI ──
-      pub_dedup$full_reference_APA <- ifelse(
+      # A work known only by its DOI or URL is listed by that alone, not as
+      # "NA DOI: ...".
+      pub_dedup$doi_link <- ifelse(!is.na(pub_dedup$doi_id),
+                                   paste0("https://doi.org/", pub_dedup$doi_id), NA_character_)
+      cit_txt <- ifelse(is.na(pub_dedup$citation_clean), "", pub_dedup$citation_clean)
+      pub_dedup$full_reference_APA <- trimws(paste(cit_txt, ifelse(
         !is.na(pub_dedup$doi_link),
-        paste0(pub_dedup$citation_clean, " DOI: ", pub_dedup$doi_link),
-        ifelse(
-          !is.na(pub_dedup$url_clean),
-          paste0(pub_dedup$citation_clean, " Available at: ", pub_dedup$url_clean),
-          pub_dedup$citation_clean
-        )
-      )
+        paste0("DOI: ", pub_dedup$doi_link),
+        ifelse(!is.na(pub_dedup$url_clean), paste0("Available at: ", pub_dedup$url_clean), "")
+      )))
       
       # ── IDs (after sort: REF_001 = most cited) ──
       pub_dedup$citation_id <- sprintf("REF_%03d", seq_len(nrow(pub_dedup)))
@@ -338,6 +354,9 @@ generate_all_citations <- function(scenario_table,
           id                 = pub_dedup$citation_id[i],
           count              = pub_dedup$count[i],
           full_reference_APA = pub_dedup$full_reference_APA[i],
+          # The work's normalised DOI, null without one. Section 4.4 of the
+          # narrative lists these.
+          doi                = pub_dedup$doi_id[i],
           source_types       = as.list(st)
         )
       })
@@ -440,6 +459,7 @@ license: CC-BY-4.0
       
       all_citations[[sp]] <- list(
         files = c(json_file, bib_file, csv_file, cff_file),
+        bibliography_json = json_file,
         total_references = nrow(pub_dedup),
         unpublished_records = unpublished_count
       )

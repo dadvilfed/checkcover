@@ -16,13 +16,16 @@ README, sections [Where things live](README.md#where-things-live) and
 |---|---|---|---|
 | `/data/spatial/` | `/work/spatial_data` (read-only) | reference layers | no |
 | `/data/output/` | `/data/output` | revision folders `1.0/`, `1.1/`, … **only** | **yes: this is the mirror** |
-| `/data/state/` | `/data/state` | `cache/`, `temporal/`, `logs/`, `_registry.json` | **never**: holds coordinates |
+| `/data/state/` | `/data/state` | `cache/`, `temporal/`, `inputs/`, `logs/`, `_registry.json` | **never**: holds coordinates |
 | `/data/runs/<run_id>/` | `/data/runs/<run_id>` | `run.json`, `input.tsv`, `run.log`, `preflight.json`, `status.json`, `work/` | **never**: `input.tsv` and `work/` hold coordinates |
 
 `/data/state/` is the fourth volume, next to the three in the original plan. It
 must persist across runs. `temporal/` is the version-to-version history that the
-temporal delta compares against. `cache/` saves hours per run: WDPA by country,
-merged HydroBASINS levels, TEOW, FEOW, Natural Earth.
+temporal delta compares against. `inputs/<rev>/` is each revision's
+fingerprint input: a package compares its taxon's records with those of the
+revision of the taxon's previous package, to say what changed in its input
+(section 6, step 5). `cache/` saves hours per run: WDPA by country, merged
+HydroBASINS levels, TEOW, FEOW, Natural Earth.
 
 **Invariants**
 
@@ -175,7 +178,8 @@ and 176 MB of temporal history for three revisions, with 260 GB free.
 | `/data/state/cache/` | the next run rebuilds it, which costs hours (WDPA downloads) |
 
 **Never delete:** `/data/output/<rev>/` of an installed revision,
-`/data/state/temporal/`, or `/data/state/temporal.checkpoint/`.
+`/data/state/temporal/`, `/data/state/temporal.checkpoint/`, or
+`/data/state/inputs/<rev>/` of an installed revision.
 
 ---
 
@@ -217,6 +221,26 @@ rebuild months later can still differ. Keep the saved image (step 2).
    package. If the new tag changes what cheCkOVER computes, the first run with
    it needs `"force_reprocess": true` to rebuild all taxa. The tag's release
    notes must say whether it does.
+5. **Input snapshots of earlier revisions (once, on the first tag after
+   `runtime-1.0`).** Every run stores its fingerprint input in
+   `/data/state/inputs/<rev>/`, so a package can list what changed in its
+   taxon's input since the taxon's previous package. 1.0 and 1.1 were made
+   before that. Store theirs from the inputs they ran on; the run id of each
+   is in its manifest (1.0: `run_20260924_baseline`, the export with the claims
+   cleared; 1.1: `run_20260927_4`):
+   ```bash
+   for r in 1.0:run_20260924_baseline 1.1:run_20260927_4; do
+     rev=${r%%:*}; run=${r#*:}
+     podman run --rm -v /data/output:/data/output:ro -v /data/state:/data/state \
+       -v /data/runs/$run:/data/runs/$run:ro checkover:<tag> \
+       Rscript tools/seed_input_snapshot.R /data/runs/$run/input.tsv $rev /data/output /data/state
+   done
+   ```
+   The tool stores a snapshot only if every taxon's fingerprint equals the one
+   in that revision's manifest, which proves it is the input that revision ran
+   on; otherwise it stores nothing and exits `1`. Use WoC's frozen copy of the
+   input if the run folder no longer holds it. Without a snapshot the packages
+   still build: their input changes read "not available", with a caveat.
 
 ---
 

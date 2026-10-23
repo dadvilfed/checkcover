@@ -483,8 +483,15 @@ one of its records: `record_id`, `longitude`, `latitude`, `year`, `is_extinct`,
 `occurrence_origin`, `country`, `continents`, `admin_1`,
 `extinction_remarks`, `citation_all`, `doi_all` and `url_all`. Any difference
 in any of them — one record added, removed or edited — marks the taxon
-changed. There is no minimum size of change. (The ±5 % that appears in narratives is the threshold of the AOO
-*trend label*, and has nothing to do with change detection.)
+changed. There is no minimum size of change. (The ±5 % of
+`trend_vs_previous` in `package_metadata.json` is the threshold of an AOO
+change class against the taxon's previous package, and has nothing to do with
+change detection. The narratives state the measured values instead.)
+
+Each run also keeps its whole fingerprint input in the state dir
+(`<state_dir>/inputs/<version>/`), so a package can list what changed in its
+taxon's input since the taxon's previous package: extinction claims added,
+records added, withdrawn and revised.
 
 The last eight joined for the clean 1.0: each reaches the packages, so editing
 it in the source used to leave a stale package marked `unchanged`. Which input
@@ -697,10 +704,10 @@ These are decisions, not accidents — changing one changes published numbers.
 
 | Rule | Value |
 |---|---|
-| EOO | convex hull; **undefined (`NA`, never 0)** below 3 unique points |
-| Distribution category | `< 3` active records ⇒ **endemic** (short-range), regardless of EOO |
+| EOO | convex hull on the sphere; **undefined (`NA`, never 0)** below 3 unique points, and when no hemisphere contains the points (s2 would return the whole Earth); `EOO_status` says which |
+| Distribution category | `< 3` distinct active localities ⇒ **endemic** (short-range), regardless of EOO |
 | Cosmopolitan | a continent counts only with **≥ 5 records and ≥ 5 %** of the species' labelled records; blanks excluded |
-| Non-indigenous category | `< 3` records ⇒ **local**, not widespread |
+| Non-indigenous category | `< 3` distinct localities ⇒ **local**, not widespread |
 | post-2000 | strictly `year > 2000` |
 | AOO | occupied cells on a **true equal-area 2 × 2 km lattice** (EPSG:6933), 4 km² each |
 | Extinction mask | records within **500 m geodesic** of an extinction event and predating it are suppressed |

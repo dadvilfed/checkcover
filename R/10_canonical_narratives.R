@@ -17,8 +17,11 @@
 #' @param checkover_version      cheCkOVER software version string (e.g. "1.0")
 #' @param output_version         Output version label (e.g. "v1.0" or "v1.1")
 #' @param snapshot_date          Data snapshot date string "YYYY-MM-DD" (defaults to today)
-#' @param prev_reports_dir       Path to previous-version per-species JSON reports (enables
-#'                               version delta; NULL = v1.0 behaviour, delta omitted)
+#' @param ctx                    RunContext: the version delta reads the taxon's
+#'                               previous package and the input snapshots through it
+#'                               (NULL = no delta)
+#' @param citations              Module 7's result; section 4.4 states each
+#'                               bibliography's own figures (NULL = no bibliography)
 #' @return List of generated canonical narratives
 generate_canonical_narratives <- function(scenario_table,
                                           result_indigenous,
@@ -33,8 +36,8 @@ generate_canonical_narratives <- function(scenario_table,
                                           checkover_version  = "1.0",
                                           output_version     = "v1.0",
                                           snapshot_date      = NULL,
-                                          prev_reports_dir   = NULL,
-                                          ctx                = NULL) {
+                                          ctx                = NULL,
+                                          citations          = NULL) {
   
   module <- "MODULE10_CANONICAL"
   
@@ -105,7 +108,7 @@ generate_canonical_narratives <- function(scenario_table,
         checkover_version = checkover_version,
         output_version    = output_version,
         snapshot_date     = snapshot_date,
-        prev_reports_dir  = prev_reports_dir,
+        citations         = citations$citations[[sp]],
         sp_clean          = sp_clean,
         ctx               = ctx,
         module            = module
@@ -375,23 +378,18 @@ generate_canonical_narratives <- function(scenario_table,
   data.frame(value = names(tb), n = as.integer(tb), stringsAsFactors = FALSE)
 }
 
-#' Every source value for a population branch, consolidated sources included.
+#' EOO as the narrative prints it: the area, or why it is undefined.
 #'
-#' Prefers the `<field>_all` column written by de-duplication, which holds every
-#' distinct source of a collapsed occurrence pipe-joined, and falls back to the
-#' single-valued column for data produced before that change.
-#'
-#' @param d Branch data frame (sp_ind / sp_nind), or NULL.
-#' @param field "citation" or "doi".
-#' @return Character vector of individual source values (may repeat).
-.narrative_sources <- function(d, field) {
-  if (is.null(d) || nrow(d) == 0L) return(character(0))
-  all_col <- paste0(field, "_all")
-  x <- if (all_col %in% names(d)) d[[all_col]] else d[[field]]
-  if (is.null(x)) return(character(0))
-  x <- unlist(strsplit(as.character(x[!is.na(x)]), "\\s*\\|\\s*"))
-  x <- trimws(x)
-  x[nzchar(x)]
+#' @param report A per-species report (Module 3C/4C), or NULL.
+.eoo_text <- function(report) {
+  eoo <- suppressWarnings(as.numeric(report$metrics$eoo_km2 %||% NA))
+  if (length(eoo) == 1L && is.finite(eoo))
+    return(paste0(format(round(eoo, 0), big.mark = ","), " km²"))
+  switch(as.character(report$metrics$eoo_status %||% ""),
+         fewer_than_3_localities = "undefined (fewer than 3 distinct localities)",
+         exceeds_hemisphere = paste0("undefined (the localities do not fit in one hemisphere, ",
+                                     "so no convex hull exists)"),
+         "N/A")
 }
 
 #' Frequency table over a PIPE-JOINED multi-value column.
@@ -523,7 +521,7 @@ generate_canonical_narratives <- function(scenario_table,
                                        ind_report, nind_report,
                                        iso_lang, feow_map, hydrobasin_names,
                                        checkover_version, output_version,
-                                       snapshot_date, prev_reports_dir,
+                                       snapshot_date, citations = NULL,
                                        sp_clean, module, ctx = NULL) {
   
   # We need at least one report to proceed
@@ -559,17 +557,8 @@ generate_canonical_narratives <- function(scenario_table,
                                     snapshot_date))
   }
 
-  # --- Load version delta (if prev_reports_dir provided) ---
-  delta_ind  <- .load_version_delta(sp_clean, "indigenous",    prev_reports_dir, ind_report)
-  delta_nind <- .load_version_delta(sp_clean, "non_indigenous", prev_reports_dir, nind_report)
-
-  # --- Single-source trend (same inputs as package_metadata.json) ---
-  # Read prior-version AOO from the shared lookup and compute the trend with the
-  # shared rule. This is bound to the SAME source Module 9 uses, so the narrated
-  # trend equals metrics.<pop>.trend_vs_previous exactly (Lucian bug 5). Trend is
-  # meaningful only when the population is present in the current snapshot.
-  meta_delta_ind  <- .build_meta_delta(ctx, sp_clean, ind_report,  "indigenous")
-  meta_delta_nind <- .build_meta_delta(ctx, sp_clean, nind_report, "non_indigenous")
+  # --- Version delta against the taxon's previous package (NULL = first) ---
+  delta <- .build_package_delta(ctx, sp_clean, ind_report, nind_report)
 
   # --- Build sections ---
   sec1 <- .build_section1(sp, vern_by_lang, ind_report, nind_report)
@@ -577,15 +566,12 @@ generate_canonical_narratives <- function(scenario_table,
   sec3 <- .build_section3(sp, sp_nind, nind_report, scenario, feow_map, hydrobasin_names)
   sec4 <- .build_section4(sp, sp_ind, sp_nind, ind_report, nind_report,
                           checkover_version, output_version, snapshot_date,
-                          delta_ind, delta_nind, output_version,
-                          meta_delta_ind, meta_delta_nind)
+                          delta, citations)
   sec5 <- .build_section5(sp, scenario, vern_by_lang, sp_ind, sp_nind,
-                          ind_report, nind_report, delta_ind, delta_nind,
-                          output_version, checkover_version, feow_map, hydrobasin_names,
-                          meta_delta_ind, meta_delta_nind)
-  
+                          ind_report, nind_report, delta,
+                          output_version, checkover_version, feow_map, hydrobasin_names)
+
   # Assemble YAML front-matter + all sections
-  is_versioned <- !grepl("^v?1\\.0$", output_version, ignore.case = TRUE)
   full_markdown <- paste(
     "---",
     "title: \"Canonical Geo-Narrative\"",
@@ -711,71 +697,156 @@ generate_canonical_narratives <- function(scenario_table,
 
 
 # ===========================================================================
-# HELPER: Single-source trend delta (bound to package_metadata's source)
-# Uses the SHARED prior-AOO lookup + trend rule from 00_run_context.R, so the
-# narrated trend equals metrics.<pop>.trend_vs_previous exactly. Returns NULL on
-# baseline / absent population / missing ctx (nothing to narrate).
+# HELPER: Version delta against the taxon's previous package
 # ===========================================================================
-.build_meta_delta <- function(ctx, sp_clean, report, pop) {
-  if (is.null(report) || is.null(ctx)) return(NULL)
-  if (!exists("read_prior_species_aux", mode = "function")) return(NULL)
+# What a package says about its taxon's previous package (Lucian, 2026-10):
+# records, AOO, EOO and documented local extinctions, previous -> current, and
+# what changed in the taxon's input since then. Measured values only, no trend
+# label. The previous values are those the previous package published (its
+# package_metadata.json, read_prior_species_aux()); the current ones are the
+# values this package's metadata will carry, converted as Module 9 converts
+# them, which the audit checks. The previous package is the taxon's own last
+# package, not the previous global release.
+#
+# @return NULL for the taxon's first package (or without a RunContext), else
+#   list(previous_version, previous_date, previous_code, current_code,
+#        indigenous, non_indigenous), each population list(prev, curr, changes);
+#   changes is NULL when the inputs cannot be compared.
+.build_package_delta <- function(ctx, sp_clean, ind_report, nind_report) {
+  if (is.null(ctx) || !exists("read_prior_species_aux", mode = "function")) return(NULL)
   aux <- tryCatch(read_prior_species_aux(ctx, sp_clean), error = function(e) NULL)
   if (is.null(aux) || isTRUE(aux$is_baseline)) return(NULL)
 
-  curr_aoo <- suppressWarnings(as.numeric(report$metrics$aoo_km2 %||% NA))
-  prev_aoo <- if (identical(pop, "indigenous")) aux$prior_aoo_indigenous else aux$prior_aoo_non_indigenous
-  prev_aoo <- suppressWarnings(as.numeric(prev_aoo %||% NA))
-  n_curr   <- as.integer(report$metrics$n_records %||% 0L)
+  taxon_rows <- function(v) {
+    s <- read_input_snapshot(ctx$state_dir, v)
+    if (is.null(s)) NULL else s[s$package_id == sp_clean, , drop = FALSE]
+  }
+  changes <- compare_taxon_inputs(taxon_rows(aux$previous_version),
+                                  taxon_rows(ctx$framework_version))
 
-  # Trend meaningful only when the population is present now (matches Module 9).
-  trend   <- if (n_curr > 0L) compute_trend_vs_previous(curr_aoo, prev_aoo) else NA_character_
-  aoo_pct <- if (is.finite(curr_aoo) && is.finite(prev_aoo) && prev_aoo > 0)
-    round((curr_aoo - prev_aoo) / prev_aoo * 100, 1) else NA_real_
-
-  list(previous_version = aux$previous_version,
-       prev_aoo = prev_aoo, curr_aoo = curr_aoo,
-       aoo_change_pct = aoo_pct, trend = trend)
+  num <- function(x) { x <- suppressWarnings(as.numeric(x %||% NA)); if (length(x) == 1L) x else NA_real_ }
+  # As Module 9's population block: AOO 0 and EOO undefined when absent.
+  now <- function(report) {
+    aoo <- num(report$metrics$aoo_km2); eoo <- num(report$metrics$eoo_km2)
+    list(records     = num(report$metrics$n_records %||% 0),
+         aoo         = if (is.finite(aoo)) round(aoo) else 0,
+         eoo         = if (is.finite(eoo)) round(eoo) else NA_real_,
+         extinctions = num(report$counts$n_extinctions %||% 0))
+  }
+  before <- function(block) {
+    list(records     = num(block$records %||% 0),
+         aoo         = num(block$AOO_km2 %||% 0),
+         eoo         = num(block$EOO_km2),
+         extinctions = num(block$extinctions_count %||% 0))
+  }
+  list(
+    previous_version = aux$previous_version,
+    previous_date    = aux$previous_date,
+    previous_code    = aux$previous_code_version,
+    current_code     = ctx$code_version,
+    indigenous     = list(prev = before(aux$prior_metrics$indigenous), curr = now(ind_report),
+                          changes = changes$indigenous),
+    non_indigenous = list(prev = before(aux$prior_metrics$non_indigenous), curr = now(nind_report),
+                          changes = changes$non_indigenous)
+  )
 }
 
+# "a -> b unit" for one measured value ("208 -> 196 km²"); "undefined" for a
+# missing side, the unit then staying with the number.
+.delta_pair <- function(a, b, unit = "") {
+  f <- function(x) if (is.finite(x)) format(x, big.mark = ",", scientific = FALSE) else "undefined"
+  if (is.finite(b)) paste0(f(a), " → ", f(b), unit)
+  else if (is.finite(a)) paste0(f(a), unit, " → ", f(b))
+  else paste0(f(a), " → ", f(b))
+}
 
-# ===========================================================================
-# HELPER: Load version delta for one population type
-# ===========================================================================
-.load_version_delta <- function(sp_clean, pop_type, prev_reports_dir, current_report) {
-  if (is.null(prev_reports_dir) || is.null(current_report)) return(NULL)
-  
-  prev_file <- file.path(prev_reports_dir, pop_type, paste0(sp_clean, ".json"))
-  if (!file.exists(prev_file)) return(NULL)
-  
-  prev_report <- tryCatch(jsonlite::read_json(prev_file, simplifyVector = TRUE),
-                          error = function(e) NULL)
-  if (is.null(prev_report)) return(NULL)
-  
-  curr_n   <- as.integer(current_report$metrics$n_records %||% NA)
-  prev_n   <- as.integer(prev_report$metrics$n_records    %||% NA)
-  curr_eoo <- as.numeric(current_report$metrics$eoo_km2   %||% NA)
-  prev_eoo <- as.numeric(prev_report$metrics$eoo_km2      %||% NA)
-  curr_aoo <- as.numeric(current_report$metrics$aoo_km2   %||% NA)
-  prev_aoo <- as.numeric(prev_report$metrics$aoo_km2      %||% NA)
-  
-  aoo_change_pct <- if (!is.na(curr_aoo) && !is.na(prev_aoo) && prev_aoo > 0)
-    round((curr_aoo - prev_aoo) / prev_aoo * 100, 1) else NA_real_
-  
-  trend <- if (is.na(aoo_change_pct)) "unknown" else
-    if (aoo_change_pct > 5) "increasing" else
-      if (aoo_change_pct < -5) "decline" else "stable"
-  
-  list(
-    prev_n          = prev_n,
-    curr_n          = curr_n,
-    new_records     = if (!is.na(curr_n) && !is.na(prev_n)) curr_n - prev_n else NA_integer_,
-    prev_eoo        = prev_eoo,
-    curr_eoo        = curr_eoo,
-    prev_aoo        = prev_aoo,
-    curr_aoo        = curr_aoo,
-    aoo_change_pct  = aoo_change_pct,
-    trend           = trend
-  )
+# Whether any of the four measured values differs between the two packages.
+.delta_changed <- function(pd) {
+  any(vapply(c("records", "aoo", "eoo", "extinctions"), function(k) {
+    a <- pd$prev[[k]]; b <- pd$curr[[k]]
+    !identical(is.finite(a), is.finite(b)) || (is.finite(a) && a != b)
+  }, logical(1)))
+}
+
+#' One version-delta subsection (4.2 indigenous, 4.3 non-indigenous).
+#'
+#' The caveat is printed only when the cause of a difference cannot be told
+#' from the input changes listed above it: the previous input is not stored,
+#' or the input did not change and neither did the code. When the input did not
+#' change but the code did, the code is the cause and is named.
+.render_delta_block <- function(header, delta, pd, output_version, scope_word) {
+  pv <- paste0("v", sub("^v", "", delta$previous_version))
+  ch <- pd$changes
+  changes_line <- if (is.null(ch)) {
+    paste0("not available (the input of ", pv, " is not stored)")
+  } else {
+    parts <- c(paste0("extinction claims added: ", ch$claims_added),
+               if (ch$claims_withdrawn > 0) paste0("extinction claims withdrawn: ", ch$claims_withdrawn),
+               paste0("records added: ", ch$records_added),
+               paste0("records withdrawn: ", ch$records_withdrawn),
+               paste0("records revised: ", ch$records_revised))
+    paste(parts, collapse = "; ")
+  }
+
+  cause <- character(0)
+  if (.delta_changed(pd)) {
+    code_changed <- !is.null(delta$previous_code) && !is.null(delta$current_code) &&
+      !identical(as.character(delta$previous_code), as.character(delta$current_code))
+    if (is.null(ch)) {
+      cause <- c("", paste0("> *The input of the previous package is not available for comparison, ",
+                            "so the cause of these differences cannot be told from the data.*"))
+    } else if (sum(unlist(ch)) == 0) {
+      cause <- if (code_changed) {
+        c("", paste0("> *The input records of the ", scope_word, " range did not change; the ",
+                     "differences come from the processing code (", delta$previous_code, " → ",
+                     delta$current_code, ").*"))
+      } else {
+        c("", paste0("> *Neither the input records of the ", scope_word, " range nor the ",
+                     "processing code changed, so the cause of these differences cannot be ",
+                     "told from the data.*"))
+      }
+    }
+  }
+
+  c(header, "",
+    paste0("- **Current package:** ", output_version, " (", Sys.Date(), ")"),
+    paste0("- **Previous package of this taxon:** ", pv,
+           if (!is.null(delta$previous_date)) paste0(" (", delta$previous_date, ")") else ""),
+    paste0("- **Records:** ", .delta_pair(pd$prev$records, pd$curr$records)),
+    paste0("- **AOO:** ", .delta_pair(pd$prev$aoo, pd$curr$aoo, " km²")),
+    paste0("- **EOO:** ", .delta_pair(pd$prev$eoo, pd$curr$eoo, " km²")),
+    paste0("- **Documented local extinctions:** ",
+           .delta_pair(pd$prev$extinctions, pd$curr$extinctions)),
+    paste0("- **Input changes since ", pv, ":** ", changes_line),
+    cause,
+    "")
+}
+
+#' The section-5 sentence on a range against the previous package: what was
+#' measured, never a trend. "smaller" / "larger" only when AOO and EOO agree
+#' (or one is unchanged or undefined), "differs" when they disagree.
+.range_change_sentence <- function(delta, pd, range_word) {
+  if (is.null(delta) || is.null(pd) || !isTRUE(pd$curr$records > 0)) return("")
+  pv <- paste0("v", sub("^v", "", delta$previous_version))
+  d <- c(pd$curr$aoo - pd$prev$aoo,
+         if (is.finite(pd$prev$eoo) && is.finite(pd$curr$eoo)) pd$curr$eoo - pd$prev$eoo)
+  d <- d[is.finite(d)]
+  # An EOO that became defined or undefined has no direction of its own (it can
+  # be undefined for too few localities or for too wide a spread), but it is
+  # not "unchanged" either.
+  eoo_flip <- !identical(is.finite(pd$prev$eoo), is.finite(pd$curr$eoo))
+  verb <- if ((!length(d) || all(d == 0)) && !eoo_flip) "is unchanged from"
+          else if (length(d) && all(d <= 0) && any(d < 0)) "is smaller than in"
+          else if (length(d) && all(d >= 0) && any(d > 0)) "is larger than in"
+          else "differs from"
+  vals <- if (identical(verb, "is unchanged from"))
+    paste0("AOO ", format(pd$curr$aoo, big.mark = ","), " km², EOO ",
+           if (is.finite(pd$curr$eoo)) paste0(format(pd$curr$eoo, big.mark = ","), " km²") else "undefined")
+  else
+    paste0("AOO ", .delta_pair(pd$prev$aoo, pd$curr$aoo, " km²"),
+           ", EOO ", .delta_pair(pd$prev$eoo, pd$curr$eoo, " km²"))
+  paste0(" The documented ", range_word, " range ", verb, " the previous package of this taxon, ",
+         pv, " (", vals, ").")
 }
 
 
@@ -816,21 +887,28 @@ generate_canonical_narratives <- function(scenario_table,
     lines <- c(lines, "")
   }
   
-  # Type locality (if available)
-  type_loc <- report$type_locality %||% NULL
-  if (!is.null(type_loc)) {
+  # Type locality: whether a record of the type locality is among the records
+  # analyzed (report flag type_locality_present, the same one package_metadata
+  # carries). This read `report$type_locality`, a field no report has: `$`
+  # partially matched type_locality_present, so every package printed the
+  # bare flag as "Locality: TRUE" or "Locality: FALSE" (Lucian, 2026-10). A
+  # structured type_locality block, if a report ever carries one, is listed.
+  type_loc  <- report[["type_locality"]]
+  type_flag <- report[["type_locality_present"]]
+  if (is.list(type_loc)) {
     lines <- c(lines, "### Type locality", "")
-    if (is.list(type_loc)) {
-      if (!is.null(type_loc$geographic_unit))
-        lines <- c(lines, paste0("- **Geographic unit:** ", type_loc$geographic_unit))
-      if (!is.null(type_loc$protected_area) && nzchar(type_loc$protected_area))
-        lines <- c(lines, paste0("- **Protected area:** ", type_loc$protected_area))
-      if (!is.null(type_loc$reference))
-        lines <- c(lines, paste0("- **Reference:** ", type_loc$reference))
-    } else {
-      lines <- c(lines, paste0("- **Locality:** ", as.character(type_loc)))
-    }
+    if (!is.null(type_loc$geographic_unit))
+      lines <- c(lines, paste0("- **Geographic unit:** ", type_loc$geographic_unit))
+    if (!is.null(type_loc$protected_area) && nzchar(type_loc$protected_area))
+      lines <- c(lines, paste0("- **Protected area:** ", type_loc$protected_area))
+    if (!is.null(type_loc$reference))
+      lines <- c(lines, paste0("- **Reference:** ", type_loc$reference))
     lines <- c(lines, "")
+  } else if (!is.null(type_flag)) {
+    lines <- c(lines, "### Type locality", "",
+               paste0("- **Type locality represented among the analyzed records:** ",
+                      if (isTRUE(as.logical(type_flag))) "yes" else "no"),
+               "")
   }
   
   paste(lines, collapse = "\n")
@@ -858,18 +936,16 @@ generate_canonical_narratives <- function(scenario_table,
   lines <- c(lines, "### 2.1 Distribution Summary", "")
   
   category <- ind_report$metrics$iucn_category %||% "N/A"
-  eoo_val  <- ind_report$metrics$eoo_km2       %||% NA
   aoo_val  <- ind_report$metrics$aoo_km2       %||% NA
   
   lines <- c(lines,
              paste0("- **Distribution category:** ", category),
              paste0("- **Area of occupancy (AOO):** ",
                     if (!is.na(aoo_val)) paste0(format(round(aoo_val, 0), big.mark = ","), " km\u00b2") else "N/A"),
-             paste0("- **Extent of occurrence (EOO):** ",
-                    if (!is.na(eoo_val)) paste0(format(round(eoo_val, 0), big.mark = ","), " km\u00b2") else "N/A"),
+             paste0("- **Extent of occurrence (EOO):** ", .eoo_text(ind_report)),
              ""
   )
-  
+
   # --- Geographic distribution ---
   lines <- c(lines, "#### Geographic distribution", "")
   
@@ -1104,18 +1180,16 @@ generate_canonical_narratives <- function(scenario_table,
   
   # --- 3.2 Metrics ---
   lines <- c(lines, "### 3.2 Metrics", "")
-  
-  eoo_val <- nind_report$metrics$eoo_km2 %||% NA
+
   aoo_val <- nind_report$metrics$aoo_km2 %||% NA
   
   lines <- c(lines,
              paste0("- **Area of occupancy (AOO):** ",
                     if (!is.na(aoo_val)) paste0(format(round(aoo_val, 0), big.mark = ","), " km\u00b2") else "N/A"),
-             paste0("- **Extent of occurrence (EOO):** ",
-                    if (!is.na(eoo_val)) paste0(format(round(eoo_val, 0), big.mark = ","), " km\u00b2") else "N/A"),
+             paste0("- **Extent of occurrence (EOO):** ", .eoo_text(nind_report)),
              ""
   )
-  
+
   # Resolve basin and FEOW codes to human-readable names before tabulation
   basin_col <- .resolve_basin_cells(sp_nind$hydrobasin,         hydrobasin_names)
   feow_col  <- .resolve_feow_col(sp_nind$freshwater_ecoregion,  feow_map)
@@ -1223,33 +1297,8 @@ generate_canonical_narratives <- function(scenario_table,
 # ===========================================================================
 .build_section4 <- function(sp, sp_ind, sp_nind, ind_report, nind_report,
                             checkover_version, output_version, snapshot_date,
-                            delta_ind, delta_nind, curr_version_label,
-                            meta_delta_ind = NULL, meta_delta_nind = NULL) {
+                            delta = NULL, citations = NULL) {
 
-  is_versioned <- !grepl("^v?1\\.0$", output_version, ignore.case = TRUE)
-
-  # Compact AOO-based delta block from the single-source meta-delta (same source
-  # as package_metadata trend). Used when the richer prev-report delta is absent.
-  .render_meta_delta_block <- function(header, md) {
-    if (is.null(md)) return(NULL)
-    aoo_line <- if (is.finite(md$prev_aoo) && is.finite(md$curr_aoo))
-      paste0(format(round(md$prev_aoo, 0), big.mark = ","), " → ",
-             format(round(md$curr_aoo, 0), big.mark = ","), " km²",
-             if (!is.na(md$aoo_change_pct))
-               paste0(" (", ifelse(md$aoo_change_pct >= 0, "+", ""), md$aoo_change_pct, "%)")
-             else "")
-    else "N/A"
-    c(header, "",
-      paste0("- **Current version:** ", output_version, ", ", Sys.Date()),
-      paste0("- **Previous version:** ", md$previous_version %||% "previous version"),
-      paste0("- **AOO:** ", aoo_line),
-      paste0("- **Current trend:** ", md$trend %||% "n/a"),
-      "",
-      "> *Trend reflects data updates (new records, refined coordinates, documented*",
-      "> *extinctions) and may not indicate biological range change.*",
-      "")
-  }
-  
   # Record counts are bound to the canonical metrics object (report$metrics$
   # n_records = the analyzed, post-suppression set), NOT recomputed from the
   # occurrence slice. This is the headline "N validated occurrence records"
@@ -1257,42 +1306,36 @@ generate_canonical_narratives <- function(scenario_table,
   n_ind  <- as.integer(ind_report$metrics$n_records  %||% (if (!is.null(sp_ind))  nrow(sp_ind)  else 0L))
   n_nind <- as.integer(nind_report$metrics$n_records %||% (if (!is.null(sp_nind)) nrow(sp_nind) else 0L))
   n_total <- n_ind + n_nind
-  
+
   lines <- c(
     "## 4. DATA QUALITY, TRACEABILITY, AND PROVENANCE",
     ""
   )
-  
+
   # --- 4.1 Data Summary ---
   # Accuracy and data quality — computed from raw data
   all_acc <- c(if (!is.null(sp_ind))  sp_ind$accuracy  else character(0),
                if (!is.null(sp_nind)) sp_nind$accuracy else character(0))
   n_high_acc  <- sum(!is.na(all_acc) & tolower(all_acc) == "exact",  na.rm = TRUE)
   n_low_acc   <- sum(!is.na(all_acc) & tolower(all_acc) == "locality", na.rm = TRUE)
-  n_known_acc <- sum(!is.na(all_acc) & tolower(all_acc) != "unknown", na.rm = TRUE)
   dq_score    <- if (n_total > 0) round(n_high_acc / n_total * 100, 1) else NA_real_
   dq_str      <- if (!is.na(dq_score))
     paste0(dq_score, "% high-accuracy records (", n_high_acc, "/", n_total,
            "; low-accuracy: ", n_low_acc, ")")
   else "N/A"
-  
-  # Bibliography — DOIs and citations from raw data.
-  #
-  # Reads the *_all columns, not citation/doi. De-duplication (01_ingest.R,
-  # 2026-09) keeps every source of a consolidated occurrence in citation_all and
-  # doi_all, while citation/doi hold only the surviving row's value. Module 7 was
-  # updated to expand them; this section was not, so the narrative's reference
-  # count dropped exactly the consolidated sources the change existed to keep,
-  # and disagreed with the bibliography files in the same package.
-  all_doi  <- c(.narrative_sources(sp_ind,  "doi"),
-                .narrative_sources(sp_nind, "doi"))
-  all_cite <- c(.narrative_sources(sp_ind,  "citation"),
-                .narrative_sources(sp_nind, "citation"))
-  valid_doi  <- sort(unique(all_doi [!is.na(all_doi)  & nzchar(all_doi)]))
-  valid_cite <- sort(unique(all_cite[!is.na(all_cite) & nzchar(all_cite)]))
-  n_refs     <- length(unique(c(valid_doi, valid_cite)))
-  doi_str    <- if (length(valid_doi) > 0) paste(valid_doi, collapse = "; ") else "none"
-  
+
+  # Bibliography: the figures of the package's own bibliography (Module 7),
+  # never recounted here. This counted distinct DOI strings plus distinct
+  # citation strings of the records, 7 + 8 = 15 for A. bihariensis, whose
+  # bibliography holds 8 references (Lucian, 2026-10).
+  biblio <- if (!is.null(citations$bibliography_json) && file.exists(citations$bibliography_json))
+    tryCatch(jsonlite::read_json(citations$bibliography_json, simplifyVector = FALSE),
+             error = function(e) NULL) else NULL
+  n_refs  <- as.integer(biblio$totals$total_references %||% 0L)
+  dois    <- unlist(lapply(biblio$references %||% list(), function(r) r$doi))
+  dois    <- sort(unique(dois[!is.na(dois) & nzchar(dois)]))
+  doi_str <- if (length(dois) > 0) paste(dois, collapse = "; ") else "none"
+
   lines <- c(lines,
              "### 4.1 Data summary", "",
              paste0("- **Total records analyzed:** ", format(n_total, big.mark = ",")),
@@ -1302,98 +1345,21 @@ generate_canonical_narratives <- function(scenario_table,
              paste0("- **Data quality score:** ", dq_str),
              ""
   )
-  
-  # --- 4.2 Version delta: indigenous range (v1.1+) ---
-  if (is_versioned && !is.null(delta_ind)) {
-    prev_version <- "previous version"
-    lines <- c(lines,
-               "### 4.2 Version delta: indigenous range", "",
-               paste0("- **Current version:** ", output_version, ", ", Sys.Date()),
-               paste0("- **Previous version:** ", prev_version),
-               paste0("- **New presence records added:** ",
-                      if (!is.na(delta_ind$new_records)) delta_ind$new_records else "N/A"),
-               paste0("- **Record count change:** ",
-                      if (!is.na(delta_ind$prev_n) && !is.na(delta_ind$curr_n))
-                        paste0(delta_ind$prev_n, " \u2192 ", delta_ind$curr_n,
-                               " (net: ", ifelse(delta_ind$curr_n >= delta_ind$prev_n, "+", ""),
-                               delta_ind$curr_n - delta_ind$prev_n, ")")
-                      else "N/A"),
-               paste0("- **EOO:** ",
-                      if (!is.na(delta_ind$prev_eoo) && !is.na(delta_ind$curr_eoo))
-                        paste0(format(round(delta_ind$prev_eoo, 0), big.mark = ","), " \u2192 ",
-                               format(round(delta_ind$curr_eoo, 0), big.mark = ","), " km\u00b2")
-                      else "N/A"),
-               paste0("- **AOO:** ",
-                      if (!is.na(delta_ind$prev_aoo) && !is.na(delta_ind$curr_aoo))
-                        paste0(format(round(delta_ind$prev_aoo, 0), big.mark = ","), " \u2192 ",
-                               format(round(delta_ind$curr_aoo, 0), big.mark = ","), " km\u00b2",
-                               if (!is.na(delta_ind$aoo_change_pct))
-                                 paste0(" (", ifelse(delta_ind$aoo_change_pct >= 0, "+", ""),
-                                        delta_ind$aoo_change_pct, "%)")
-                               else "")
-                      else "N/A"),
-               # Trend bound to the single source (== package_metadata trend)
-               paste0("- **Current trend:** ", meta_delta_ind$trend %||% delta_ind$trend),
-               "",
-               "> *Trend reflects data updates (new records, refined coordinates, documented extinctions)*",
-               "> *and may not indicate biological range change.*",
-               ""
-    )
-  } else if (is_versioned && !is.null(meta_delta_ind)) {
-    # No prev-report delta, but prior AOO is available from the version manifest:
-    # render the single-source trend so Section 4 never contradicts Section 5.
-    lines <- c(lines, .render_meta_delta_block("### 4.2 Version delta: indigenous range", meta_delta_ind))
-  } else if (is_versioned) {
-    lines <- c(lines,
-               "### 4.2 Version delta: indigenous range", "",
-               "*No previous version available for comparison.*",
-               ""
-    )
+
+  # --- 4.2 / 4.3 Version delta, against the taxon's previous package ---
+  # Only when there is one; a population's subsection appears when it has
+  # records now or had them then.
+  if (!is.null(delta)) {
+    has_pop <- function(report, pd) !is.null(report) || isTRUE(pd$prev$records > 0)
+    if (has_pop(ind_report, delta$indigenous))
+      lines <- c(lines, .render_delta_block("### 4.2 Version delta: indigenous range",
+                                            delta, delta$indigenous, output_version, "native"))
+    if (has_pop(nind_report, delta$non_indigenous))
+      lines <- c(lines, .render_delta_block("### 4.3 Version delta: non-indigenous range",
+                                            delta, delta$non_indigenous, output_version,
+                                            "non-indigenous"))
   }
-  
-  # --- 4.3 Version delta: non-indigenous range (v1.1+) ---
-  if (is_versioned && !is.null(nind_report)) {
-    if (!is.null(delta_nind)) {
-      lines <- c(lines,
-                 "### 4.3 Version delta: non-indigenous range", "",
-                 paste0("- **New presence records added:** ",
-                        if (!is.na(delta_nind$new_records)) delta_nind$new_records else "N/A"),
-                 paste0("- **Record count change:** ",
-                        if (!is.na(delta_nind$prev_n) && !is.na(delta_nind$curr_n))
-                          paste0(delta_nind$prev_n, " \u2192 ", delta_nind$curr_n,
-                                 " (net: ", ifelse(delta_nind$curr_n >= delta_nind$prev_n, "+", ""),
-                                 delta_nind$curr_n - delta_nind$prev_n, ")")
-                        else "N/A"),
-                 paste0("- **EOO:** ",
-                        if (!is.na(delta_nind$prev_eoo) && !is.na(delta_nind$curr_eoo))
-                          paste0(format(round(delta_nind$prev_eoo, 0), big.mark = ","), " \u2192 ",
-                                 format(round(delta_nind$curr_eoo, 0), big.mark = ","), " km\u00b2")
-                        else "N/A"),
-                 paste0("- **AOO:** ",
-                        if (!is.na(delta_nind$prev_aoo) && !is.na(delta_nind$curr_aoo))
-                          paste0(format(round(delta_nind$prev_aoo, 0), big.mark = ","), " \u2192 ",
-                                 format(round(delta_nind$curr_aoo, 0), big.mark = ","), " km\u00b2",
-                                 if (!is.na(delta_nind$aoo_change_pct))
-                                   paste0(" (", ifelse(delta_nind$aoo_change_pct >= 0, "+", ""),
-                                          delta_nind$aoo_change_pct, "%)")
-                                 else "")
-                        else "N/A"),
-                 paste0("- **Current trend:** ", meta_delta_nind$trend %||% delta_nind$trend),
-                 "",
-                 "> *Trend reflects data updates and may not indicate biological invasion dynamics.*",
-                 ""
-      )
-    } else if (!is.null(meta_delta_nind)) {
-      lines <- c(lines, .render_meta_delta_block("### 4.3 Version delta: non-indigenous range", meta_delta_nind))
-    } else {
-      lines <- c(lines,
-                 "### 4.3 Version delta: non-indigenous range", "",
-                 "*No previous non-indigenous version available for comparison.*",
-                 ""
-      )
-    }
-  }
-  
+
   # --- 4.4 Bibliographic coverage ---
   lines <- c(lines,
              "### 4.4 Bibliographic coverage", "",
@@ -1441,12 +1407,9 @@ generate_canonical_narratives <- function(scenario_table,
 # SECTION 5: FORMAL NARRATIVE SUMMARY
 # ===========================================================================
 .build_section5 <- function(sp, scenario, vern_by_lang, sp_ind, sp_nind,
-                            ind_report, nind_report, delta_ind, delta_nind,
+                            ind_report, nind_report, delta = NULL,
                             output_version, checkover_version = "1.0",
-                            feow_map = NULL, hydrobasin_names = NULL,
-                            meta_delta_ind = NULL, meta_delta_nind = NULL) {
-
-  is_versioned <- !grepl("^v?1\\.0$", output_version, ignore.case = TRUE)
+                            feow_map = NULL, hydrobasin_names = NULL) {
 
   paragraphs <- character(0)
 
@@ -1461,7 +1424,7 @@ generate_canonical_narratives <- function(scenario_table,
 
   # --- Paragraph 3: Conservation context (80-120 words) ---
   if (!is.null(ind_report) && (scenario == 1 || scenario == 3)) {
-    paragraphs <- c(paragraphs, .p3_conservation(sp, sp_ind, ind_report, delta_ind, is_versioned, output_version, meta_delta_ind))
+    paragraphs <- c(paragraphs, .p3_conservation(sp, sp_ind, ind_report, delta))
   }
   
   # --- Type locality note (if applicable) ---
@@ -1479,12 +1442,12 @@ generate_canonical_narratives <- function(scenario_table,
   
   # --- Paragraph 4: Non-indigenous populations (50-70 words, if present) ---
   if (!is.null(nind_report) && (scenario == 2 || scenario == 3)) {
-    paragraphs <- c(paragraphs, .p4_non_indigenous(sp, sp_nind, nind_report, delta_nind, is_versioned, output_version, meta_delta_nind))
+    paragraphs <- c(paragraphs, .p4_non_indigenous(sp, sp_nind, nind_report, delta))
   }
   
   # --- Paragraph 5: Data quality, provenance, and interpretation (80-100 words) ---
   paragraphs <- c(paragraphs, .p5_provenance(sp, sp_ind, sp_nind, ind_report, nind_report,
-                                             output_version, checkover_version, is_versioned))
+                                             output_version, checkover_version, delta))
   
   full_text  <- paste(paragraphs, collapse = "\n\n")
   word_count <- length(strsplit(gsub("\\*\\*|\\*", "", full_text), "\\s+")[[1]])
@@ -1678,7 +1641,7 @@ generate_canonical_narratives <- function(scenario_table,
 # ---------------------------------------------------------------------------
 # Paragraph 3: Conservation context
 # ---------------------------------------------------------------------------
-.p3_conservation <- function(sp, sp_ind, ind_report, delta_ind, is_versioned, output_version, meta_delta = NULL) {
+.p3_conservation <- function(sp, sp_ind, ind_report, delta = NULL) {
   prot_pct <- ind_report$conservation$protection_percentage %||% NA
   prot_n   <- ind_report$conservation$n_protected_records   %||% NA
   
@@ -1712,33 +1675,21 @@ generate_canonical_narratives <- function(scenario_table,
            "not a conclusion of biological extinction.")
   } else ""
 
-  # Version delta trend (v1.1+). Bound to the SINGLE SOURCE (meta_delta$trend ==
-  # package_metadata.json metrics.indigenous.trend_vs_previous); vocabulary is
-  # increase/decrease/stable. Narrated only when non-null on a non-baseline
-  # snapshot (Lucian bug 5). The optional AOO % is derived from the same prior
-  # AOO used for the trend, so it can never contradict the label.
-  trend_str <- ""
-  mtrend <- meta_delta$trend %||% NA_character_
-  if (is_versioned && !is.na(mtrend)) {
-    pct <- meta_delta$aoo_change_pct
-    trend_str <- switch(mtrend,
-      stable   = paste0(" **Native range extent remains stable** in the current version (", output_version, ")."),
-      increase = paste0(" **Native range shows expansion** in the current version (", output_version, ")",
-                        if (!is.null(pct) && !is.na(pct)) paste0(", with an AOO increase of ", abs(pct), "%") else "", "."),
-      decrease = paste0(" **Native range exhibits decline** in the current version (", output_version, ")",
-                        if (!is.null(pct) && !is.na(pct)) paste0(", with an AOO reduction of ", abs(pct), "%") else "", "."),
-      ""
-    )
-  }
+  # Against the previous package: what was measured, never a trend. "Native
+  # range exhibits decline / remains stable" stated a difference between two
+  # packages as a population trend, and followed the AOO class alone, so A.
+  # astacus read "stable" with 110 newly documented local extinctions
+  # (Lucian, 2026-10).
+  change_str <- .range_change_sentence(delta, delta$indigenous, "native")
 
-  paste0(pa_phrase, frag_str, ext_str, trend_str)
+  paste0(pa_phrase, frag_str, ext_str, change_str)
 }
 
 
 # ---------------------------------------------------------------------------
 # Paragraph 4: Non-indigenous populations
 # ---------------------------------------------------------------------------
-.p4_non_indigenous <- function(sp, sp_nind, nind_report, delta_nind, is_versioned, output_version, meta_delta = NULL) {
+.p4_non_indigenous <- function(sp, sp_nind, nind_report, delta = NULL) {
   n_countries <- nind_report$counts$n_countries %||% NA
   category    <- nind_report$metrics$category   %||% "unknown"
   
@@ -1769,22 +1720,8 @@ generate_canonical_narratives <- function(scenario_table,
     paste0(" (first record: ", first_yr, ")")
   else ""
   
-  # Version delta trend. Bound to the single source (meta_delta$trend ==
-  # package_metadata metrics.non_indigenous.trend_vs_previous); increase/decrease/
-  # stable vocabulary, narrated only when non-null on a non-baseline snapshot.
-  trend_str <- ""
-  mtrend <- meta_delta$trend %||% NA_character_
-  if (is_versioned && !is.na(mtrend)) {
-    pct <- meta_delta$aoo_change_pct
-    trend_str <- switch(mtrend,
-      stable   = paste0(" **Alien range extent remains stable** (", output_version, ")."),
-      increase = paste0(" **Alien populations continue expanding** (", output_version, ")",
-                        if (!is.null(pct) && !is.na(pct)) paste0(", with a ", abs(pct), "% AOO increase") else "", "."),
-      decrease = paste0(" **Alien range shows contraction** (", output_version, ")",
-                        if (!is.null(pct) && !is.na(pct)) paste0(", with a ", abs(pct), "% AOO reduction") else "", "."),
-      ""
-    )
-  }
+  # Against the previous package: measured values, no trend (as paragraph 3).
+  change_str <- .range_change_sentence(delta, delta$non_indigenous, "non-indigenous")
   
   # Non-indigenous extinctions (bound to canonical counts.n_extinctions).
   n_ext_ni <- as.integer(nind_report$counts$n_extinctions %||% 0L)
@@ -1796,7 +1733,7 @@ generate_canonical_narratives <- function(scenario_table,
 
   paste0(
     "Outside its native range, non-indigenous populations classified as **", category,
-    "** have been documented in ", country_phrase, first_yr_phrase, ".", ext_ni_str, trend_str
+    "** have been documented in ", country_phrase, first_yr_phrase, ".", ext_ni_str, change_str
   )
 }
 
@@ -1805,19 +1742,24 @@ generate_canonical_narratives <- function(scenario_table,
 # Paragraph 5: Data quality, provenance, and interpretation
 # ---------------------------------------------------------------------------
 .p5_provenance <- function(sp, sp_ind, sp_nind, ind_report, nind_report,
-                           output_version, checkover_version = "1.0", is_versioned) {
+                           output_version, checkover_version = "1.0", delta = NULL) {
   # Bound to canonical metrics.records (analyzed/post-suppression set), not the
   # occurrence slice — headline "N validated occurrence records" (Lucian bug 2).
   n_ind  <- as.integer(ind_report$metrics$n_records  %||% (if (!is.null(sp_ind))  nrow(sp_ind)  else 0L))
   n_nind <- as.integer(nind_report$metrics$n_records %||% (if (!is.null(sp_nind)) nrow(sp_nind) else 0L))
   n_total <- n_ind + n_nind
 
-  # Version prefix for v1.1+
-  version_prefix <- if (is_versioned)
+  # Version prefix whenever the taxon has a previous package (not by the version
+  # number: a taxon first packaged in 1.3 has none).
+  version_prefix <- if (!is.null(delta))
     paste0("This synthesis represents **version ", sub("^v", "", output_version),
-           "** (", Sys.Date(), "), updating the previous assessment. ")
+           "** (", Sys.Date(), "), updating the previous package of this taxon (v",
+           sub("^v", "", delta$previous_version), "). ")
   else ""
-  
+
+  # The sentence "Bibliographic coverage statistics and high-accuracy record
+  # percentages are not yet tracked at per-species level in this version" went
+  # in 2026-10: section 4 gives both (Lucian).
   paste0(
     version_prefix,
     "This synthesis is based on **",
@@ -1825,8 +1767,6 @@ generate_canonical_narratives <- function(scenario_table,
     " validated occurrence records** (",
     format(n_ind,  big.mark = ","), " indigenous, ",
     format(n_nind, big.mark = ","), " non-indigenous). ",
-    "Bibliographic coverage statistics and high-accuracy record percentages are not yet ",
-    "tracked at per-species level in this version. ",
     "Analysis processed on ",
     as.character(Sys.Date()), ". ",
     "Raw data are maintained in the World of Crayfish\u00ae repository (Ion et al. 2024). ",
