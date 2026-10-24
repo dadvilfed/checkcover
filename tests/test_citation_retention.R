@@ -149,6 +149,20 @@ ok(grepl(sprintf("**Total references:** %d\n", bj$totals$total_references), sec4
    "4.4 Total references = the bibliography's totals.total_references")
 ok(grepl("**DOI-linked references:** none", sec4, fixed = TRUE),
    "4.4 lists the bibliography's DOIs (none here)")
+# The audit accepts that section against its bibliography, also when no
+# reference has a DOI (it called "none" vs no DOI a mismatch on the
+# runtime-1.1 demo trial, Pontastacus cubanicus).
+suppressWarnings(suppressMessages(source("tests/audit_packages.R")))
+pk <- file.path(out, "pkg", "Astacus_astacus")
+dir.create(file.path(pk, "narratives"), recursive = TRUE); dir.create(file.path(pk, "citations"))
+writeLines(sec4, file.path(pk, "narratives", "Astacus_astacus_canonical.md"), useBytes = TRUE)
+file.copy(cit_obj$bibliography_json, file.path(pk, "citations"))
+jsonlite::write_json(list(snapshot = list(version = "1.1"),
+                          metrics = list(indigenous = list(records = 2L), non_indigenous = list(records = 0L))),
+                     file.path(pk, "package_metadata.json"), auto_unbox = TRUE)
+aud <- audit_narrative_metadata_consistency(file.path(out, "pkg"))
+ok(aud$n_mismatched == 0, sprintf("the audit passes 4.4 against a DOI-less bibliography (%s)",
+                                  paste(unlist(aud$mismatches), collapse = "; ")))
 ok(grepl("**Total references:** 0\n",
          .build_section4("X", NULL, NULL, NULL, NULL, "1.1", "v1.1", "2026-10-23"), fixed = TRUE),
    "no bibliography -> 0 references")

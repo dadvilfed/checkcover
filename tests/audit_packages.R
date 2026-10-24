@@ -268,7 +268,10 @@ audit_narrative_metadata_consistency <- function(version_dir) {
       problems <- c(problems, sprintf("Total references: narrative %s vs bibliography %s", narr_refs, meta_refs))
     refs <- bj$references %||% list()
     if (length(refs) && all(vapply(refs, function(r) "doi" %in% names(r), logical(1)))) {
-      b_dois <- sort(unique(unlist(lapply(refs, function(r) r$doi))))
+      # as.character(): a bibliography with no DOI unlists to NULL, which
+      # identical() does not take for character(0) (Pontastacus cubanicus,
+      # runtime-1.1 demo trial).
+      b_dois <- sort(unique(as.character(unlist(lapply(refs, function(r) r$doi)))))
       m <- regmatches(md, regexec("\\*\\*DOI-linked references:\\*\\* ([^\n]*)", md))[[1]]
       n_dois <- if (length(m) >= 2 && m[2] != "none") sort(unique(trimws(strsplit(m[2], ";")[[1]]))) else character(0)
       if (!identical(n_dois, b_dois))
