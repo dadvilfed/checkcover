@@ -622,7 +622,7 @@ generate_canonical_narratives <- function(scenario_table,
 
   disclaimer <- report$disclaimer %||%
     (if (exists("CHECKOVER_EXTINCTION_DISCLAIMER")) CHECKOVER_EXTINCTION_DISCLAIMER else
-      paste0("This status reflects the state of the World of Crayfish data, not a ",
+      paste0("This status reflects the state of the World of Crayfish® data, not a ",
              "field-verified biological extinction."))
 
   as_of <- if (!is.na(last_year)) paste0("as of ", last_year) else "on the current data"
