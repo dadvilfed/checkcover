@@ -4,8 +4,8 @@
 # manifest, and never replaces one (the snapshots let a package say what
 # changed in its taxon's input since its previous package).
 #
-# Runs the tool on the public demo input against a manifest made from that
-# input's own fingerprints.
+# Runs the tool on a small input written here (the image carries no demo_data/)
+# against a manifest made from that input's own fingerprints.
 
 .root <- local({
   a <- commandArgs(FALSE); f <- sub("^--file=", "", a[grepl("^--file=", a)])
@@ -33,9 +33,30 @@ ok <- function(cond, what) {
 }
 cat("[test_seed_input_snapshot]\n")
 
-demo <- normalizePath("demo_data/WoC_demo_Pontastacus.tsv")
 tmp  <- file.path(tempdir(), paste0("seed_", as.integer(runif(1) * 1e8)))
 root <- file.path(tmp, "output"); state <- file.path(tmp, "state")
+dir.create(tmp, recursive = TRUE)
+
+# A WoC export in miniature: two taxa, one duplicate group (R1/R2, two
+# sources), one extinction claim.
+cols <- c("occurrenceID", "scientificName", "decimalLatitude", "decimalLongitude", "year",
+          "establishmentMeans", "occurrenceOrigin", "sourceCitation", "bibliographicCitation",
+          "contributor", "claimExtinction", "occurrenceRemarks", "continent", "country", "county")
+row <- function(id, sp, lat, lon, cite = "Smith 2020", doi = "", claim = "", remarks = "")
+  c(id, sp, lat, lon, "2020", "indigenous", "native", cite, doi, "Ana Pop", claim, remarks,
+    "Europe", "Romania", "Bihor")
+rows <- list(
+  row("R1", "Astacus astacus", "46.5", "22.5", "Smith 2020", "10.1000/smith"),
+  row("R2", "Astacus astacus", "46.5", "22.5", "Jones 2021", "10.1000/jones"),
+  row("R3", "Astacus astacus", "46.7", "22.9", claim = "Extinct", remarks = "dried out"),
+  row("R4", "Astacus astacus", "46.9", "23.1"),
+  row("R5", "Pontastacus leptodactylus", "45.1", "28.2"),
+  row("R6", "Pontastacus leptodactylus", "45.3", "28.4"))
+demo <- file.path(tmp, "input.tsv")
+con <- file(demo, "wb")
+writeLines(enc2utf8(c(paste(cols, collapse = "\t"), vapply(rows, paste, "", collapse = "\t"))),
+           con, sep = "\n", useBytes = TRUE)
+close(con)
 
 # The manifest a run on the demo would write: one fingerprint per taxon.
 work <- file.path(tmp, "work"); dir.create(work, recursive = TRUE)
