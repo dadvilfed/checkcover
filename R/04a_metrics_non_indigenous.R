@@ -32,12 +32,13 @@ calculate_non_indigenous_metrics <- function(result_non_indigenous, output_dir =
     } else cd
     
     # Helper: Calculate EOO
-    # Delegates to calc_eoo_km2() in 00_helpers.R, which also returns NA for a
-    # hull beyond a hemisphere: multi-continent non-native ranges (P. clarkii,
-    # C. destructor, C. quadricarinatus, P. virginalis) read as the whole Earth,
-    # 510,066,073 km², in 1.0 (Lucian, 2026-10). Such a range is still
-    # "widespread": the category rule below needs no EOO for it.
-    .calc_eoo <- function(lon, lat) calc_eoo_km2(lon, lat)
+    # The non-indigenous EOO is the sum of the Western and Eastern Hemisphere
+    # hulls (calc_eoo_hemisphere_sum_km2() in 00_helpers.R; Lucian, 2026-10).
+    # One hull read the whole Earth, 510,066,073 km², for P. clarkii,
+    # C. destructor, C. quadricarinatus and P. virginalis, and spanned the
+    # Atlantic for ranges introduced on both sides of it. A range on one side
+    # keeps its single-hull value. The native EOO stays one hull (03a).
+    .calc_eoo <- function(lon, lat) calc_eoo_hemisphere_sum_km2(lon, lat)
     
     # Helper: Calculate AOO
     # Delegates to calc_aoo_km2() in 00_helpers.R: one equal-area implementation

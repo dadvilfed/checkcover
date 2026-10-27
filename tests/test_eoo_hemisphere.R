@@ -54,6 +54,33 @@ ok(identical(eoo_status(c(1, 1, 2), c(1, 1, 2), calc_eoo_km2(c(1, 1, 2), c(1, 1,
              "fewer_than_3_localities"), "two localities: fewer_than_3_localities")
 ok(identical(eoo_status(numeric(0), numeric(0), NA_real_), "no_localities"), "no localities: no_localities")
 
+# ---- non-indigenous EOO: the two hemisphere hulls, summed (runtime-1.2) ----
+hs <- calc_eoo_hemisphere_sum_km2(lonw, latw)
+ok(is.finite(hs) && hs > 0 && hs < whole, sprintf("the five-continent range has a finite EOO (%.0f km²)", hs))
+west <- eoo_western_hemisphere(lonw)
+ok(isTRUE(all.equal(hs, calc_eoo_km2(lonw[west], latw[west]) + calc_eoo_km2(lonw[!west], latw[!west]))),
+   "it is hull(west) + hull(east)")
+ok(isTRUE(all.equal(calc_eoo_hemisphere_sum_km2(lon1, lat1), e1)),
+   "a range on one side keeps exactly its single-hull value")
+# Introduced on both sides of the Atlantic, as F. virilis or P. leniusculus:
+# the single hull spans the ocean, the sum does not.
+lona <- c(-80.1, -79.2, -78.5, 10.1, 11.4, 12.2); lata <- c(40.1, 41.3, 39.8, 50.2, 51.1, 49.7)
+ok(calc_eoo_hemisphere_sum_km2(lona, lata) < calc_eoo_km2(lona, lata) / 10,
+   "a transatlantic range no longer counts the ocean")
+ok(isTRUE(eoo_western_hemisphere(-20.0001)) && !eoo_western_hemisphere(-20) &&
+   isTRUE(eoo_western_hemisphere(160)) && !eoo_western_hemisphere(159.9999),
+   "the split: west = longitude < -20 or >= 160")
+ok(!eoo_western_hemisphere(-9.1) && !eoo_western_hemisphere(-0.1),
+   "Ireland, Portugal and the UK are east of the split, with the rest of Europe")
+l3 <- c(-80, -79, -78, 10); a3 <- c(40, 41, 39.5, 50)
+ok(isTRUE(all.equal(calc_eoo_hemisphere_sum_km2(l3, a3), calc_eoo_km2(l3[1:3], a3[1:3]))),
+   "a side with fewer than 3 localities adds 0")
+l22 <- c(-80, -79, 10, 11); a22 <- c(40, 41, 50, 51)
+ok(is.na(calc_eoo_hemisphere_sum_km2(l22, a22)) &&
+   identical(eoo_status(l22, a22, NA_real_, method = CHECKOVER_EOO_METHOD_NI),
+             "fewer_than_3_localities_per_hemisphere"),
+   "2 + 2 localities: undefined, not 0 (0 would make the range 'local')")
+
 # The threshold is half the sphere: a hull that fits in a hemisphere is below it.
 ok(CHECKOVER_EARTH_AREA_KM2 > 5.09e8 && CHECKOVER_EARTH_AREA_KM2 < 5.11e8, "Earth area constant")
 

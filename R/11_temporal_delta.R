@@ -256,7 +256,9 @@ load_previous_version <- function(species_clean,
 # CURRENT metric against one stored in a previous version, so a different
 # algorithm here would measure the difference between two algorithms rather
 # than a change in the data.
-.calc_eoo_default <- function(lon, lat) calc_eoo_km2(lon, lat)
+.calc_eoo_default <- function(lon, lat, scope = "indigenous") {
+  if (identical(scope, "non_indigenous")) calc_eoo_hemisphere_sum_km2(lon, lat) else calc_eoo_km2(lon, lat)
+}
 
 .calc_aoo_default <- function(lon, lat) calc_aoo_km2(lon, lat)
 

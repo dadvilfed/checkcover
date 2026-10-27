@@ -124,5 +124,24 @@ ok(length(j6$references) == 1 && j6$references[[1]]$count == 1 &&
    identical(j6$references[[1]]$full_reference_APA, "DOI: https://doi.org/10.1016/j.jcz.2019.01.006"),
    "a DOI-only source gets a count and no 'NA' in its reference")
 
+# ---- 7. URL-only sources: one reference per source, URLs kept ----
+raw7 <- data.frame(
+  species = "Austropotamobius bihariensis", record_id = paste0("U", 1:6),
+  longitude = 22 + (1:6) / 10, latitude = 46, year = 2020, citation = NA_character_, doi = NA_character_,
+  url = c("https://www.ncbi.nlm.nih.gov/nuccore/JX402194,JX402193",
+          "https://www.ncbi.nlm.nih.gov/nuccore/JX402195",
+          "https://www.ncbi.nlm.nih.gov/nuccore/JX402194,JX402193",
+          "http://www.biomonitoring.sk", "http://www.biomonitoring.sk", "http://www.biomonitoring.sk/x"),
+  is_extinct = FALSE, stringsAsFactors = FALSE)
+j7 <- bib_of(consolidate_duplicates(raw7))
+gb <- ref_with(j7, "GenBank")
+bm <- ref_with(j7, "biomonitoring.sk")
+ok(j7$totals$total_references == 2, "URL-only sources: one reference per source, not per URL")
+ok(length(gb) == 1 && startsWith(gb[[1]]$full_reference_APA, "GenBank (3 accessions)") && gb[[1]]$count == 3,
+   "GenBank links: 'GenBank (n accessions)', counting the accessions in comma-joined URLs")
+ok(length(gb) == 1 && length(gb[[1]]$urls) == 2, "the individual GenBank URLs are kept in the JSON")
+ok(length(bm) == 1 && startsWith(bm[[1]]$full_reference_APA, "biomonitoring.sk (3 records)") &&
+   length(bm[[1]]$urls) == 2, "a portal: '<domain> (n records)', its URLs kept")
+
 cat(sprintf("\n[test_bibliography_doi] %d passed, %d failed\n", pass, fail))
 quit(status = if (fail > 0) 1 else 0)

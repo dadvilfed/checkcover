@@ -65,7 +65,7 @@ suppressPackageStartupMessages({
       occurrences     = occ_b,
       delta_data      = NULL,
       metrics_current = list(
-        EOO_km2   = .calc_eoo_default(occ_b$longitude, occ_b$latitude),
+        EOO_km2   = .calc_eoo_default(occ_b$longitude, occ_b$latitude, scope),
         AOO_km2   = .calc_aoo_default(occ_b$longitude, occ_b$latitude),
         countries = unique(stats::na.omit(occ_b$country)),
         basins    = unique(stats::na.omit(occ_b$hydrobasin))
@@ -85,7 +85,8 @@ suppressPackageStartupMessages({
     previous_date = NULL  # arg retained for API compatibility; logic uses anti-join
   )
   geo <- analyze_geographic_changes(occ, occurrences_previous, ext)
-  rng <- calculate_range_delta(occ, metrics_previous)
+  rng <- calculate_range_delta(occ, metrics_previous,
+                               eoo_fn = function(lon, lat) .calc_eoo_default(lon, lat, scope))
   ext_sum <- summarize_extinctions(ext, occ, occurrences_previous)
 
   n_supp <- sum(occ$temporal_status == "suppressed", na.rm = TRUE)
@@ -108,7 +109,7 @@ suppressPackageStartupMessages({
 
   active <- occ %>% dplyr::filter(.data$temporal_status == "active")
   metrics_current <- list(
-    EOO_km2   = .calc_eoo_default(active$longitude, active$latitude),
+    EOO_km2   = .calc_eoo_default(active$longitude, active$latitude, scope),
     AOO_km2   = .calc_aoo_default(active$longitude, active$latitude),
     countries = unique(stats::na.omit(active$country)),
     basins    = unique(stats::na.omit(active$hydrobasin))

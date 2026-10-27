@@ -488,7 +488,7 @@ installing. The detail blocks name files and reasons, never coordinates.
 | Field | |
 |---|---|
 | `species`, `package_id` | display name and folder name |
-| `status`, `scenario`, `metrics` | the results; per population, `EOO_status` says why a null `EOO_km2` is null (`fewer_than_3_localities`, `exceeds_hemisphere`, `no_localities`), and `trend_vs_previous` is the AOO change class against the taxon's previous package (±5 %; `decrease` when the population has no active record left; null for its first package or a population absent then and now) |
+| `status`, `scenario`, `metrics` | the results; per population, `EOO_method` says how `EOO_km2` is computed (`convex_hull` for the native range; `hemisphere_sum_20W_160E` for the non-indigenous range, the Western and Eastern Hemisphere hulls summed), `EOO_status` why a null one is null (`fewer_than_3_localities`, `fewer_than_3_localities_per_hemisphere`, `exceeds_hemisphere`, `no_localities`), and `trend_vs_previous` is the AOO change class against the taxon's previous package (±5 %; `decrease` when the population has no active record left; null for its first package or a population absent then and now) |
 | `provenance.framework_version` | the revision (string) |
 | `provenance.code_version` | the code that computed it |
 | `provenance.license` | `CC-BY-4.0` |

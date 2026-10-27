@@ -140,6 +140,11 @@ s4c <- .build_section4("Testus astacus", NULL, NULL, ind_report, NULL, "1.1", "v
                        delta = .build_package_delta(ctx, "Testus_astacus", ind_report, NULL))
 ok(has(s4c, "come from the processing code (runtime-1.0 → runtime-1.1)"),
    "input unchanged, code changed: the difference is attributed to the code")
+d_code <- .build_package_delta(ctx, "Testus_astacus", ind_report, NULL)
+s5c <- .range_change_sentence(d_code, d_code$indigenous, "native")
+ok(has(s5c, "The input records of the documented native range are unchanged since the previous package of this taxon, v1.0") &&
+   has(s5c, "come from the processing code (runtime-1.0 → runtime-1.1)") && !has(s5c, "smaller"),
+   "section 5: a change of method is not called a smaller range")
 
 # Nothing changed: no caveat at all.
 same_report <- ind_report

@@ -88,6 +88,22 @@ generate_all_citations <- function(scenario_table,
       doi
     }
 
+    # The source of a URL-only reference: "GenBank" for NCBI nucleotide
+    # records, else the host without "www.".
+    .url_source <- function(u) {
+      host <- tolower(sub("[/?#].*$", "", sub("^[A-Za-z]+://", "", u)))
+      host <- sub("^www\\.", "", host)
+      ifelse(grepl("(^|\\.)ncbi\\.nlm\\.nih\\.gov$", host) & grepl("/nuccore/", u, ignore.case = TRUE),
+             "GenBank", host)
+    }
+
+    # GenBank accessions in nuccore URLs; one URL may list several, comma-joined.
+    .genbank_accessions <- function(u) {
+      a <- sub("[?#].*$", "", sub("^.*/nuccore/", "", u, ignore.case = TRUE))
+      a <- trimws(unlist(strsplit(a, "[,;[:space:]]+")))
+      unique(a[nzchar(a)])
+    }
+
     .year_from_citation <- function(cit) {
       y <- stringr::str_extract(cit, "(19|20)\\d{2}")
       suppressWarnings(as.integer(y))
@@ -282,12 +298,18 @@ generate_all_citations <- function(scenario_table,
       # Every row has a key, so a count is never NA: keying on the text alone
       # dropped rows with no citation from table() and emitted count = NA (the
       # Cherax cartalacoolah crash of 2026-08 came from that path).
+      #
+      # A source with neither DOI nor citation text, only a URL, is one
+      # reference per SOURCE, not per URL: GenBank record links are one
+      # reference "GenBank (n accessions)", a portal is "<domain> (n records)".
+      # One reference per URL put 52 into A. astacus' bibliography (Lucian,
+      # 2026-10). The individual URLs are kept in the JSON (`urls`).
       if (nrow(pub_rows) > 0) {
         pub_rows$doi_id <- .fill_doi_by_citation(pub_rows$citation_clean, pub_rows$doi_id)
         has_cit <- !is.na(pub_rows$citation_clean) & nzchar(pub_rows$citation_clean)
         pub_rows$dedup_key <- ifelse(!is.na(pub_rows$doi_id), paste0("doi:", pub_rows$doi_id),
                               ifelse(has_cit, paste0("cit:", pub_rows$citation_clean),
-                                     paste0("url:", pub_rows$url_clean)))
+                                     paste0("src:", .url_source(pub_rows$url_clean))))
         groups <- split(seq_len(nrow(pub_rows)), pub_rows$dedup_key)
         pub_dedup <- data.frame(
           citation_clean = vapply(groups, function(ix) .modal(pub_rows$citation_clean[ix]), ""),
@@ -297,6 +319,16 @@ generate_all_citations <- function(scenario_table,
           stringsAsFactors = FALSE
         )
         pub_dedup$source_types <- lapply(groups, function(ix) sort(unique(pub_rows$source_type[ix])))
+        pub_dedup$urls <- lapply(groups, function(ix) character(0))
+        for (g in which(startsWith(names(groups), "src:"))) {
+          u   <- sort(unique(pub_rows$url_clean[groups[[g]]]))
+          src <- sub("^src:", "", names(groups)[g])
+          pub_dedup$citation_clean[g] <- if (identical(src, "GenBank"))
+            sprintf("GenBank (%d accessions)", length(.genbank_accessions(u)))
+          else sprintf("%s (%d records)", src, length(groups[[g]]))
+          pub_dedup$url_clean[g] <- sub("^([A-Za-z]+://[^/?#]+).*$", "\\1", u[1])
+          pub_dedup$urls[[g]] <- u
+        }
         # Text order before the count sort below, so tied works keep the
         # alphabetical order they always had.
         pub_dedup <- pub_dedup[order(pub_dedup$citation_clean, names(groups), na.last = TRUE), , drop = FALSE]
@@ -307,6 +339,7 @@ generate_all_citations <- function(scenario_table,
           count = integer(0), stringsAsFactors = FALSE
         )
         pub_dedup$source_types <- list()
+        pub_dedup$urls <- list()
       }
       
       # ── Consolidated Unpublished entry ──
@@ -319,6 +352,7 @@ generate_all_citations <- function(scenario_table,
           stringsAsFactors = FALSE
         )
         unpub_entry$source_types <- list(unpub_st)
+        unpub_entry$urls <- list(character(0))
         pub_dedup <- dplyr::bind_rows(pub_dedup, unpub_entry)
       }
       
@@ -350,15 +384,17 @@ generate_all_citations <- function(scenario_table,
       refs_list <- lapply(seq_len(nrow(pub_dedup)), function(i) {
         st <- pub_dedup$source_types[[i]]
         if (is.null(st) || length(st) == 0) st <- "baseline"
-        list(
+        u  <- pub_dedup$urls[[i]]
+        c(list(
           id                 = pub_dedup$citation_id[i],
           count              = pub_dedup$count[i],
           full_reference_APA = pub_dedup$full_reference_APA[i],
           # The work's normalised DOI, null without one. Section 4.4 of the
           # narrative lists these.
           doi                = pub_dedup$doi_id[i],
-          source_types       = as.list(st)
-        )
+          source_types       = as.list(st)),
+          # A URL-only source: every URL its records give.
+          if (length(u)) list(urls = as.list(u)))
       })
       
       # ── BibTeX ──

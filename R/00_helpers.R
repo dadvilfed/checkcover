@@ -483,18 +483,57 @@ calc_eoo_km2 <- function(lon, lat) {
   if (!is.finite(area) || area > CHECKOVER_EARTH_AREA_KM2 / 2) NA_real_ else area
 }
 
+#' Non-indigenous EOO: the convex hulls of the Western and Eastern Hemispheres,
+#' summed (Lucian, 2026-10).
+#'
+#' The introduced range of a few global invaders lies in no single hemisphere,
+#' so one hull is the whole sphere; and a range introduced on both sides of
+#' the Atlantic gets one hull spanning the ocean. So every non-indigenous range
+#' is split at the conventional hemisphere boundary, west = longitude < -20 or
+#' >= 160, east = the rest (not 0/180, which cuts through the UK, France and
+#' Spain), and the two hulls are added. A side with fewer than three distinct
+#' localities adds 0. A range on one side keeps exactly its single-hull value.
+#' The native EOO stays a single hull (IUCN B1): calc_eoo_km2().
+#'
+#' @param lon,lat Numeric vectors of coordinates in EPSG:4326.
+#' @return EOO in km²; NA when neither side has three distinct localities (no
+#'   hull at all, as below three localities: never 0, which would read as a
+#'   real area and make the range "local"), or when a side's hull fails.
+CHECKOVER_EOO_METHOD_NATIVE <- "convex_hull"
+CHECKOVER_EOO_METHOD_NI     <- "hemisphere_sum_20W_160E"
+
+eoo_western_hemisphere <- function(lon) lon < -20 | lon >= 160
+
+calc_eoo_hemisphere_sum_km2 <- function(lon, lat) {
+  keep <- is.finite(lon) & is.finite(lat)
+  lon <- lon[keep]; lat <- lat[keep]
+  west <- eoo_western_hemisphere(lon)
+  side <- function(m) if (n_distinct_localities(lon[m], lat[m]) < 3L) 0 else calc_eoo_km2(lon[m], lat[m])
+  if (n_distinct_localities(lon[west], lat[west]) < 3L &&
+      n_distinct_localities(lon[!west], lat[!west]) < 3L) return(NA_real_)
+  side(west) + side(!west)
+}
+
 #' Why an EOO is or is not defined, for package_metadata EOO_status.
 #'
 #' @param lon,lat Numeric vectors of coordinates.
-#' @param eoo_km2 The EOO already computed for them (calc_eoo_km2()).
-#' @return "computed", "no_localities", "fewer_than_3_localities" or
-#'   "exceeds_hemisphere".
-eoo_status <- function(lon, lat, eoo_km2) {
+#' @param eoo_km2 The EOO already computed for them.
+#' @param method CHECKOVER_EOO_METHOD_NATIVE or CHECKOVER_EOO_METHOD_NI.
+#' @return "computed", "no_localities", "fewer_than_3_localities",
+#'   "fewer_than_3_localities_per_hemisphere" (hemisphere sum: three or more
+#'   localities, but no side with three) or "exceeds_hemisphere".
+eoo_status <- function(lon, lat, eoo_km2, method = CHECKOVER_EOO_METHOD_NATIVE) {
   if (length(eoo_km2) == 1L && is.finite(eoo_km2)) return("computed")
   n <- n_distinct_localities(lon, lat)
-  if (n == 0L) "no_localities"
-  else if (n < 3L) "fewer_than_3_localities"
-  else "exceeds_hemisphere"
+  if (n == 0L) return("no_localities")
+  if (n < 3L) return("fewer_than_3_localities")
+  if (identical(method, CHECKOVER_EOO_METHOD_NI)) {
+    keep <- is.finite(lon) & is.finite(lat); w <- eoo_western_hemisphere(lon[keep])
+    if (n_distinct_localities(lon[keep][w], lat[keep][w]) < 3L &&
+        n_distinct_localities(lon[keep][!w], lat[keep][!w]) < 3L)
+      return("fewer_than_3_localities_per_hemisphere")
+  }
+  "exceeds_hemisphere"
 }
 
 .eoo_hull_xy <- function(lon, lat) {

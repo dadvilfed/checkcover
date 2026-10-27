@@ -704,7 +704,8 @@ These are decisions, not accidents — changing one changes published numbers.
 
 | Rule | Value |
 |---|---|
-| EOO | convex hull on the sphere; **undefined (`NA`, never 0)** below 3 unique points, and when no hemisphere contains the points (s2 would return the whole Earth); `EOO_status` says which |
+| EOO, native | one convex hull on the sphere (IUCN B1); **undefined (`NA`, never 0)** below 3 unique points, and when no hemisphere contains the points (s2 would return the whole Earth); `EOO_status` says which |
+| EOO, non-indigenous | the convex hulls of the Western and Eastern Hemispheres, **summed**, split at longitude −20 / 160 (west = < −20 or ≥ 160); a side with < 3 unique points adds 0, and with no such side at all the EOO is undefined; a one-sided range keeps its single-hull value; `EOO_method` = `hemisphere_sum_20W_160E`; not mapped |
 | Distribution category | `< 3` distinct active localities ⇒ **endemic** (short-range), regardless of EOO |
 | Cosmopolitan | a continent counts only with **≥ 5 records and ≥ 5 %** of the species' labelled records; blanks excluded |
 | Non-indigenous category | `< 3` distinct localities ⇒ **local**, not widespread |

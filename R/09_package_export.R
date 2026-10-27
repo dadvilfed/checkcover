@@ -104,14 +104,18 @@ export_species_packages <- function(ctx,
     
     # Build the per-population metrics block per Lucian's v3 spec. Returns the
     # zero/null block when report is NULL (population type absent for species).
-    .build_pop_metrics_v3 <- function(report) {
+    # EOO_method names how the population's EOO is computed: one hull for the
+    # native range (IUCN B1), the sum of the Western and Eastern Hemisphere
+    # hulls for the non-indigenous range (00_helpers.R; Lucian, 2026-10).
+    .build_pop_metrics_v3 <- function(report, eoo_method) {
       if (is.null(report)) {
         # Population absent for this species. Convention (Lucian, 2026-06): an
         # undefined EOO is NA, never 0 — 0 would read as a real "zero area".
         # AOO stays 0 (zero occupancy is a real quantity). trend is null for an
         # empty block (settles the baseline-null vs "stable" inconsistency).
         return(list(
-          AOO_km2 = 0L, EOO_km2 = NA_integer_, EOO_status = "no_localities",
+          AOO_km2 = 0L, EOO_km2 = NA_integer_, EOO_method = eoo_method,
+          EOO_status = "no_localities",
           records = 0L,
           basins_count = 0L, countries_count = 0L, countries = list(),
           protected_areas_count = 0L, n_clusters = 0L,
@@ -135,10 +139,11 @@ export_species_packages <- function(ctx,
         # points). 0 would be indistinguishable from a real zero-area range.
         EOO_km2 = if (!is.null(report$metrics$eoo_km2) && is.finite(report$metrics$eoo_km2))
           as.integer(round(report$metrics$eoo_km2)) else NA_integer_,
-        # Why a null EOO is null: "fewer_than_3_localities", or
-        # "exceeds_hemisphere" when no hemisphere contains the localities (the
-        # whole-Earth hull of multi-continent non-native ranges, Lucian 2026-10).
-        # A zero-active report carries none: it has no localities.
+        EOO_method = as.character(report$metrics$eoo_method %||% eoo_method),
+        # Why a null EOO is null: "fewer_than_3_localities", "exceeds_hemisphere"
+        # (a native range no hemisphere contains), or for the hemisphere sum
+        # "fewer_than_3_localities_per_hemisphere". A zero-active report carries
+        # none: it has no localities.
         EOO_status = if (!is.null(report$metrics$eoo_km2) && is.finite(report$metrics$eoo_km2))
           "computed" else as.character(report$metrics$eoo_status %||% "no_localities"),
         records = report$metrics$n_records %||% 0L,
@@ -323,8 +328,8 @@ export_species_packages <- function(ctx,
       tax <- .read_prior_aux(sp_clean)
       
       # Build per-population metric blocks, then patch trends from the manifest data
-      ind_block <- .build_pop_metrics_v3(ind_rep)
-      non_block <- .build_pop_metrics_v3(non_rep)
+      ind_block <- .build_pop_metrics_v3(ind_rep, CHECKOVER_EOO_METHOD_NATIVE)
+      non_block <- .build_pop_metrics_v3(non_rep, CHECKOVER_EOO_METHOD_NI)
       # trend_vs_previous: the AOO class against the taxon's previous package
       # (trend_vs_previous_block() in 00_run_context.R). Null for a population
       # absent now and before; "decrease" when it was present before and has no

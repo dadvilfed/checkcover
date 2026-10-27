@@ -383,10 +383,15 @@ generate_canonical_narratives <- function(scenario_table,
 #' @param report A per-species report (Module 3C/4C), or NULL.
 .eoo_text <- function(report) {
   eoo <- suppressWarnings(as.numeric(report$metrics$eoo_km2 %||% NA))
+  hemi <- identical(report$metrics$eoo_method, CHECKOVER_EOO_METHOD_NI)
   if (length(eoo) == 1L && is.finite(eoo))
-    return(paste0(format(round(eoo, 0), big.mark = ","), " km²"))
+    return(paste0(format(round(eoo, 0), big.mark = ","), " km²",
+                  if (hemi) paste0(" (sum of the convex hulls of the Western and Eastern ",
+                                   "Hemispheres, split at 20°W / 160°E)")))
   switch(as.character(report$metrics$eoo_status %||% ""),
          fewer_than_3_localities = "undefined (fewer than 3 distinct localities)",
+         fewer_than_3_localities_per_hemisphere =
+           "undefined (fewer than 3 distinct localities in each hemisphere)",
          exceeds_hemisphere = paste0("undefined (the localities do not fit in one hemisphere, ",
                                      "so no convex hull exists)"),
          "N/A")
@@ -828,6 +833,20 @@ generate_canonical_narratives <- function(scenario_table,
 .range_change_sentence <- function(delta, pd, range_word) {
   if (is.null(delta) || is.null(pd) || !isTRUE(pd$curr$records > 0)) return("")
   pv <- paste0("v", sub("^v", "", delta$previous_version))
+  # Same records, different values: the method changed, not the range (the
+  # hemisphere-sum EOO of runtime-1.2 on taxa whose data did not move).
+  ch <- pd$changes
+  if (!is.null(ch) && sum(unlist(ch)) == 0 && .delta_changed(pd)) {
+    vals <- paste0("AOO ", .delta_pair(pd$prev$aoo, pd$curr$aoo, " km²"),
+                   ", EOO ", .delta_pair(pd$prev$eoo, pd$curr$eoo, " km²"))
+    code_changed <- !is.null(delta$previous_code) && !is.null(delta$current_code) &&
+      !identical(as.character(delta$previous_code), as.character(delta$current_code))
+    return(paste0(" The input records of the documented ", range_word, " range are unchanged since ",
+                  "the previous package of this taxon, ", pv, "; the differences (", vals, ") ",
+                  if (code_changed) paste0("come from the processing code (", delta$previous_code,
+                                           " → ", delta$current_code, ").")
+                  else "cannot be told from the data."))
+  }
   d <- c(pd$curr$aoo - pd$prev$aoo,
          if (is.finite(pd$prev$eoo) && is.finite(pd$curr$eoo)) pd$curr$eoo - pd$prev$eoo)
   d <- d[is.finite(d)]

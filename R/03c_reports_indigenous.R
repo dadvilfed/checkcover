@@ -197,7 +197,9 @@ generate_indigenous_reports <- function(result_indigenous,
         metrics = list(
           n_records        = nrow(sp_data),
           eoo_km2          = sp_data$eoo_km2[1],
-          # Why an undefined EOO is undefined (00_helpers.R eoo_status()).
+          # How the EOO is computed (one hull, IUCN B1), and why an undefined
+          # one is undefined (00_helpers.R eoo_status()).
+          eoo_method       = CHECKOVER_EOO_METHOD_NATIVE,
           eoo_status       = eoo_status(sp_data$longitude, sp_data$latitude, sp_data$eoo_km2[1]),
           aoo_km2          = sp_data$aoo_km2[1],
           iucn_category    = sp_data$iucn_category[1],
