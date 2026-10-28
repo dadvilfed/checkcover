@@ -163,6 +163,21 @@ jsonlite::write_json(list(snapshot = list(version = "1.1"),
 aud <- audit_narrative_metadata_consistency(file.path(out, "pkg"))
 ok(aud$n_mismatched == 0, sprintf("the audit passes 4.4 against a DOI-less bibliography (%s)",
                                   paste(unlist(aud$mismatches), collapse = "; ")))
+# WoC's hand-corrected 1.1 packages write an undefined EOO as "not computed".
+pk2 <- file.path(out, "pkg2", "Testus_x"); dir.create(file.path(pk2, "narratives"), recursive = TRUE)
+writeLines(c("### 4.2 Version delta: indigenous range", "",
+             "- **Records:** 3 → 2", "- **AOO:** 12 → 8 km²", "- **EOO:** 360 km² → not computed",
+             "- **Documented local extinctions:** 0 → 1", "", "### 4.4 Bibliographic coverage", "",
+             "- **Total references:** 0"),
+           file.path(pk2, "narratives", "Testus_x_canonical.md"), useBytes = TRUE)
+jsonlite::write_json(list(snapshot = list(version = "1.1"),
+                          metrics = list(indigenous = list(records = 2L, AOO_km2 = 8L, EOO_km2 = NA,
+                                                           extinctions_count = 1L),
+                                         non_indigenous = list(records = 0L))),
+                     file.path(pk2, "package_metadata.json"), auto_unbox = TRUE, na = "null")
+aud2 <- audit_narrative_metadata_consistency(file.path(out, "pkg2"))
+ok(aud2$n_mismatched == 0, sprintf("the audit reads WoC's 'not computed' as an undefined EOO (%s)",
+                                   paste(unlist(aud2$mismatches), collapse = "; ")))
 ok(grepl("**Total references:** 0\n",
          .build_section4("X", NULL, NULL, NULL, NULL, "1.1", "v1.1", "2026-10-23"), fixed = TRUE),
    "no bibliography -> 0 references")

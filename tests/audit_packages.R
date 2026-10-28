@@ -287,9 +287,12 @@ audit_narrative_metadata_consistency <- function(version_dir) {
       blk <- substr(md, at, nchar(md))
       nxt <- regexpr("\n#", substr(blk, 2, nchar(blk)))
       if (nxt > 0) blk <- substr(blk, 1, nxt)
+      # "not computed" is how WoC wrote an undefined value when it corrected
+      # the 1.0 and 1.1 packages by hand (2026-10); the generator writes
+      # "undefined".
       cur <- function(label) {
-        m <- regmatches(blk, regexec(paste0("\\*\\*", label, ":\\*\\* [^\n]*→ ([0-9,]+|undefined)"), blk))[[1]]
-        if (length(m) < 2) NA_character_ else m[2]
+        m <- regmatches(blk, regexec(paste0("\\*\\*", label, ":\\*\\* [^\n]*→ ([0-9,]+|undefined|not computed)"), blk))[[1]]
+        if (length(m) < 2) NA_character_ else if (m[2] == "not computed") "undefined" else m[2]
       }
       for (f in list(c("Records", "records"), c("AOO", "AOO_km2"), c("EOO", "EOO_km2"),
                      c("Documented local extinctions", "extinctions_count"))) {
