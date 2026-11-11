@@ -8,8 +8,10 @@
 # Florida, landed inside the monument in the published 1.0 (2026-11). This
 # loads the cached layers the pipeline uses, sanitizes them with the code of
 # the image it runs in, and intersects synthetic probe points (never records)
-# on every engine the pipeline can reach: s2, planar lon/lat, planar EPSG:6933
-# (.safe_intersects() fallback 2), and .safe_intersects() itself.
+# the ways the pipeline can: s2 on the sanitized layer, .safe_intersects() on
+# the whole layer as Module 2E calls it (s2 refuses the US layer, so this takes
+# the planar fallback), .safe_intersects() on the planar engine, and that
+# fallback's own form (split at +-180, EPSG:6933).
 #
 #   Rscript tools/check_wdpa_antimeridian.R <cache_dir> [ISO3 ...]     (default USA)
 #
@@ -63,18 +65,24 @@ for (iso in isos) {
   nm <- if (is.na(name_col)) rep("(unnamed)", nrow(x)) else as.character(x[[name_col]])
   wide <- which(vapply(st_geometry(x), function(g) { b <- st_bbox(g); b[["xmax"]] - b[["xmin"]] > 180 }, logical(1)))
   across <- wide[vapply(wide, function(i) .crosses_antimeridian(st_geometry(x)[[i]]), logical(1))]
-  cat(sprintf("\n%s: %d polygon features; %d span more than 180 deg of longitude; %d of them still have a ring crossing +-180\n",
+  cat(sprintf("\n%s: %d polygon features; %d span more than 180 deg of longitude; %d of them have a ring crossing +-180 after sanitizing\n",
               iso, nrow(x), length(wide), length(across)))
   if (length(wide)) cat("  wide features:", paste(unique(nm[wide]), collapse = "; "), "\n")
   s2_whole <- tryCatch({ st_intersects(probes, x); "ok" }, error = function(e) paste("FAILS:", conditionMessage(e)))
   cat(sprintf("  s2 intersection with the whole layer: %s\n", substr(s2_whole, 1, 160)))
   if (!length(wide)) next
   w <- x[wide, ]
+  w_split <- if (exists("split_antimeridian", mode = "function")) split_antimeridian(w) else w
+  cat(sprintf("  rings crossing +-180 in the form the planar fallback uses: %d\n",
+              sum(vapply(st_geometry(w_split), .crosses_antimeridian, logical(1)))))
+  # Every row reports hits on the wide features only: a probe may sit in an
+  # ordinary Gulf-coast protected area, which is no fault.
   eng <- list(
-    s2          = function() { old <- sf_use_s2(TRUE);  on.exit(sf_use_s2(old)); st_intersects(probes, w) },
-    planar      = function() { old <- sf_use_s2(FALSE); on.exit(sf_use_s2(old)); suppressMessages(st_intersects(probes, w)) },
-    planar_6933 = function() { old <- sf_use_s2(FALSE); on.exit(sf_use_s2(old)); st_intersects(st_transform(probes, 6933), st_transform(w, 6933)) },
-    safe_intersects_planar = function() { old <- sf_use_s2(FALSE); on.exit(sf_use_s2(old)); suppressMessages(.safe_intersects(probes, w)) })
+    s2                     = function() { old <- sf_use_s2(TRUE);  on.exit(sf_use_s2(old)); st_intersects(probes, w) },
+    safe_intersects        = function() { old <- sf_use_s2(TRUE);  on.exit(sf_use_s2(old))
+                                          h <- suppressMessages(.safe_intersects(probes, x)); lapply(h, function(i) match(intersect(i, wide), wide)) },
+    safe_intersects_planar = function() { old <- sf_use_s2(FALSE); on.exit(sf_use_s2(old)); suppressMessages(.safe_intersects(probes, w)) },
+    fallback2_split_6933   = function() { old <- sf_use_s2(FALSE); on.exit(sf_use_s2(old)); st_intersects(st_transform(probes, 6933), st_transform(w_split, 6933)) })
   for (e in names(eng)) {
     h <- tryCatch(eng[[e]](), error = function(err) NULL)
     if (is.null(h)) { cat(sprintf("  %-24s error\n", e)); next }

@@ -253,11 +253,13 @@ check("drop_corrupt_bbox = FALSE preserves all input features",
 # 8. A protected area split at +-180, on every engine
 # ──────────────────────────────────────────────────────────────────────────
 # WDPA stores Papahanaumokuakea split at the antimeridian. Steps 1 and 4 run
-# st_make_valid() on the spherical engine, which healed the two parts into one
+# st_make_valid() on the spherical engine, which heals the two parts into one
 # ring across +-180. Section 4 only probed on s2, where that ring is right; the
 # planar fallback of the WDPA intersection read it as stretched round the
-# globe and put 6,035 records of 131 taxa, Texas to Florida, inside the
-# monument in the published 1.0. Every engine must now agree.
+# globe and put 6,035 records of 130 taxa, Texas to Florida, inside the
+# monument in the published 1.0. Layers keep the healed ring (stored split,
+# Russia broke a continent dissolve under the image's sf 1.1.0); every planar
+# path splits it first, and every engine must agree.
 cat("\n[8] Split protected area: s2, planar lon/lat, planar EPSG:6933\n")
 
 mk_split_pa <- function() {
@@ -283,11 +285,14 @@ check("the s2 repair heals the split monument into one ring across +-180 (the bu
 for (src in c("split", "merged")) {
   out <- sanitize_spatial_layer(if (src == "split") pa_layer else merged, layer_name = "TEST_PA")
   check(sprintf("%s input: both protected areas kept", src), nrow(out) == 2L)
-  check(sprintf("%s input: no ring of the sanitized monument crosses +-180", src),
-        !.crosses_antimeridian(sf::st_geometry(out)[[1]]))
+  check(sprintf("%s input: the sanitized layer keeps the healed ring, right on s2", src),
+        .crosses_antimeridian(sf::st_geometry(out)[[1]]) && identical(hits_on(out, "s2"), want))
+  sp <- split_antimeridian(out)
+  check(sprintf("%s input: split_antimeridian() leaves no ring across +-180, as one MULTIPOLYGON", src),
+        !.crosses_antimeridian(sf::st_geometry(sp)[[1]]) && inherits(sf::st_geometry(sp)[[1]], "MULTIPOLYGON"))
   for (eng in c("s2", "planar", "6933")) {
-    h <- hits_on(out, eng)
-    check(sprintf("%s input, %s engine: monument holds its own points and not Texas or Florida", src, eng),
+    h <- hits_on(sp, eng)
+    check(sprintf("%s input, split, %s engine: monument holds its own points and not Texas or Florida", src, eng),
           identical(h, want), paste(names(h), h, collapse = " "))
   }
 }
@@ -296,10 +301,9 @@ check("repair_polygons() leaves no ring across +-180 for the planar retry",
       !.crosses_antimeridian(sf::st_geometry(rep)[[1]]) && identical(hits_on(rep, "planar"), want))
 check("split_antimeridian() leaves features that do not cross untouched",
       identical(sf::st_geometry(split_antimeridian(merged))[[2]], sf::st_geometry(merged)[[2]]))
-# GDAL 3.8 (the image's) wraps Russia into a GEOMETRYCOLLECTION with a line
-# along the cut; under sf 1.1.0 a union over it then returned two geometries
-# and the continents dissolve failed (runtime-1.3 build). A split feature is
-# always one MULTIPOLYGON of the polygon parts.
+# GDAL 3.8 (the image's) can wrap a feature into a GEOMETRYCOLLECTION with a
+# line along the cut. A split feature is always one MULTIPOLYGON of the
+# polygon parts.
 gc <- sf::st_sfc(sf::st_geometrycollection(list(
   sf::st_polygon(list(rbind(c(175, 20), c(180, 20), c(180, 30), c(175, 30), c(175, 20)))),
   sf::st_polygon(list(rbind(c(-180, 20), c(-160, 20), c(-160, 30), c(-180, 30), c(-180, 20)))),
@@ -309,27 +313,26 @@ check("a wrap that returns polygons plus a line becomes one MULTIPOLYGON of the 
       inherits(mp, "MULTIPOLYGON") && length(mp) == 2L)
 check("a wrap with no polygon parts is not used",
       is.null(.as_multipolygon(sf::st_sfc(sf::st_linestring(rbind(c(180, 20), c(180, 30))), crs = 4326))))
-for (src in c("split", "merged")) {
-  out <- sanitize_spatial_layer(if (src == "split") pa_layer else merged, layer_name = "TEST_PA")
-  check(sprintf("%s input: the sanitized layer holds polygons only", src),
-        all(as.character(sf::st_geometry_type(out)) %in% c("POLYGON", "MULTIPOLYGON")))
-}
 # Antarctica spans every longitude: no shift makes it contiguous, so it is
 # left as it was rather than broken.
 antarctica <- sf::st_polygon(list(rbind(c(-180, -60), c(-90, -65), c(0, -62), c(90, -66), c(180, -60),
                                         c(180, -90), c(-180, -90), c(-180, -60))))
 check("a ring round the whole globe (Antarctica) is not split",
       is.null(.split_at_antimeridian(antarctica, sf::st_crs(4326))))
-# The WDPA intersection itself, on the planar engine (as its fallback 2 runs):
-# given the healed ring, it must split it before intersecting.
+# The WDPA intersection itself, given the sanitized (healed) layer, on the
+# spherical engine and on the planar one its fallback 2 uses.
 h_env <- new.env()
 ok_helpers <- tryCatch({ sys.source("R/00_helpers.R", envir = h_env); TRUE }, error = function(e) FALSE)
 if (ok_helpers) {
-  old <- sf::sf_use_s2(FALSE)
-  si <- suppressMessages(lengths(h_env$.safe_intersects(probes, merged[1, ])))
-  sf::sf_use_s2(old)
-  check(".safe_intersects() on the planar engine keeps Texas and Florida out of the monument",
-        identical(setNames(si, probes$id), want), paste(si, collapse = " "))
+  healed <- sanitize_spatial_layer(pa_layer, layer_name = "TEST_PA")
+  for (s2 in c(TRUE, FALSE)) {
+    old <- sf::sf_use_s2(s2)
+    si <- suppressMessages(lengths(h_env$.safe_intersects(probes, healed[1, ])))
+    sf::sf_use_s2(old)
+    check(sprintf(".safe_intersects() on the %s engine keeps Texas and Florida out of the monument",
+                  if (s2) "spherical" else "planar"),
+          identical(setNames(si, probes$id), want), paste(si, collapse = " "))
+  }
 }
 
 

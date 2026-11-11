@@ -18,12 +18,7 @@
 #   2. st_transform(target_crs) - normalize CRS
 #   3. st_wrap_dateline()       - split features crossing +-180 onto correct sides
 #   4. st_make_valid() again    - wrap can introduce minor invalidities
-#   5. antimeridian split       - steps 1 and 4 run on the spherical engine,
-#                                 which heals a feature split at +-180 into one
-#                                 ring across it; planar operations read that
-#                                 ring as stretched (Papahanaumokuakea again,
-#                                 published 1.0). Split it again.
-#      per-feature bbox audit   - drop anything that survived broken
+#   5. per-feature bbox audit   - drop anything that survived broken
 #   6. log: features in, dropped, valid out
 #
 # Idempotent: safe to call multiple times. Defensive on cached layers
@@ -133,33 +128,25 @@ sanitize_spatial_layer <- function(x,
     error = function(e) x
   )
 
-  # ── Step 5: antimeridian split + per-feature bbox audit ──────────────────
-  # A feature whose ring crosses +-180 is split into parts on each side (see
-  # .split_at_antimeridian()). Then any feature still spanning >180 deg
-  # longitude or >170 deg latitude is almost certainly corrupt (stretched
-  # across the globe or some other geometry pathology). Drop with logging.
-  #
-  # Per-geometry bbox extraction is unfortunately not vectorized in sf, so
-  # we walk features. Fast even on ~1M-feature layers (HydroBASINS L10).
+  # ── Step 5: per-feature bbox audit ───────────────────────────────────────
+  # Any feature still spanning >180 deg longitude or >170 deg latitude is
+  # almost certainly corrupt (stretched across the globe or some other
+  # geometry pathology). Drop with logging.
   n_dropped <- 0L
-  geom <- sf::st_geometry(x)
-  n_feat <- length(geom)
-  bad_mask <- logical(n_feat)
-  longlat <- isTRUE(sf::st_is_longlat(geom))
-  split_ix <- integer(0); split_g <- list()
-  for (i in seq_len(n_feat)) {
-    bb <- tryCatch(sf::st_bbox(geom[[i]]), error = function(e) NULL)
-    if (is.null(bb) || any(!is.finite(bb))) {
-      bad_mask[i] <- TRUE
-      next
-    }
-    width  <- as.numeric(bb["xmax"]) - as.numeric(bb["xmin"])
-    height <- as.numeric(bb["ymax"]) - as.numeric(bb["ymin"])
-    if (longlat && is.finite(width) && width > 180) {
-      s <- .split_at_antimeridian(geom[[i]], sf::st_crs(geom))
-      if (!is.null(s)) { split_ix <- c(split_ix, i); split_g[[length(split_g) + 1L]] <- s }
-    }
-    if (drop_corrupt_bbox) {
+  if (drop_corrupt_bbox) {
+    # Per-geometry bbox extraction is unfortunately not vectorized in sf, so
+    # we walk features. Fast even on ~1M-feature layers (HydroBASINS L10).
+    geom <- sf::st_geometry(x)
+    n_feat <- length(geom)
+    bad_mask <- logical(n_feat)
+    for (i in seq_len(n_feat)) {
+      bb <- tryCatch(sf::st_bbox(geom[[i]]), error = function(e) NULL)
+      if (is.null(bb) || any(!is.finite(bb))) {
+        bad_mask[i] <- TRUE
+        next
+      }
+      width  <- as.numeric(bb["xmax"]) - as.numeric(bb["xmin"])
+      height <- as.numeric(bb["ymax"]) - as.numeric(bb["ymin"])
       if (is.finite(width)  && width  > 180) bad_mask[i] <- TRUE
       if (is.finite(height) && height > 170) bad_mask[i] <- TRUE
 
@@ -204,16 +191,6 @@ sanitize_spatial_layer <- function(x,
         if (isTRUE(arc_ok)) bad_mask[i] <- FALSE
       }
     }
-  }
-  if (length(split_ix)) {
-    geom[split_ix] <- sf::st_sfc(split_g, crs = sf::st_crs(geom))
-    if (inherits(x, "sf")) sf::st_geometry(x) <- geom else x <- geom
-    if (exists("log_info", mode = "function")) {
-      log_info("sanitize_spatial_layer(%s): split %d feature(s) crossing the antimeridian",
-               layer_name, length(split_ix), module = module)
-    }
-  }
-  if (drop_corrupt_bbox) {
     n_dropped <- sum(bad_mask)
     if (n_dropped > 0L) {
       # Try to identify the dropped features by common name columns
@@ -269,16 +246,24 @@ sanitize_spatial_layer <- function(x,
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# SPLITTING AT THE ANTIMERIDIAN
+# SPLITTING AT THE ANTIMERIDIAN, FOR THE PLANAR ENGINE
 #
 # WDPA stores Papahanaumokuakea Marine National Monument split at +-180, as
 # two parts. Step 1's st_make_valid() runs on the spherical engine, which heals
 # the split into ONE ring crossing the antimeridian (175 -> -160). That ring is
-# right on the sphere, but every planar operation reads it as stretched round
-# the globe at 19-32 N: the planar fallback of the WDPA intersection put 6,035
-# records of 131 taxa, Texas to Florida, inside the monument in the published
-# 1.0 (Lucian, 2026-11). Splitting such a ring again makes the feature right on
-# both engines; s2 accepts the split form as valid.
+# right on the sphere, but a planar operation reads it as stretched round the
+# globe at 19-32 N: s2 refuses the US WDPA layer as a whole ("Loop 17774 is
+# not valid"), so the intersection fell back to the planar engine and put
+# 6,035 records of 130 taxa, Texas to Florida, inside the monument in the
+# published 1.0 (Lucian, 2026-11).
+#
+# Layers keep the healed ring: it is right for every spherical operation, and
+# storing the split broke one. Under the image's sf 1.1.0 / GDAL 3.8, a
+# continent dissolved over Russia in two parts returned two geometries, and
+# the runtime-1.3 build failed (test_geo_fallback). The split is made only
+# where a planar engine may run: .safe_intersects() (00_helpers.R) and
+# repair_polygons() below, whose result feeds robust_spatial_op()'s planar
+# step.
 # ────────────────────────────────────────────────────────────────────────────
 
 #' Does any ring of this geometry jump more than 180 deg in longitude?
@@ -308,10 +293,9 @@ sanitize_spatial_layer <- function(x,
 }
 
 #' The polygon parts of a one-geometry sfc as a single MULTIPOLYGON; NULL if it
-#' has none. GDAL 3.8 (the image's) wraps Russia into a GEOMETRYCOLLECTION
-#' with a line along the cut, where GDAL 3.11 gives a MULTIPOLYGON; under
-#' sf 1.1.0, st_union() then returned one geometry per dimension, and the
-#' continents dissolve failed on Europe (runtime-1.3 build, 2026-11-11).
+#' has none. GDAL 3.8 (the image's) can wrap a feature into a
+#' GEOMETRYCOLLECTION with a line along the cut, where GDAL 3.11 gives a
+#' MULTIPOLYGON.
 .as_multipolygon <- function(w) {
   polys <- tryCatch(suppressWarnings(sf::st_collection_extract(w, "POLYGON")), error = function(e) NULL)
   if (is.null(polys) || !length(polys)) return(NULL)
@@ -323,8 +307,9 @@ sanitize_spatial_layer <- function(x,
   out[[1]]
 }
 
-#' Split every feature of a lon/lat layer whose rings cross +-180. Features
-#' that do not cross are returned untouched, in the same rows.
+#' Split every feature of a lon/lat layer whose rings cross +-180, for a
+#' planar operation. Features that do not cross are returned untouched, in the
+#' same rows.
 split_antimeridian <- function(x) {
   if (is.null(x) || !inherits(x, c("sf", "sfc"))) return(x)
   geom <- sf::st_geometry(x)
@@ -460,9 +445,9 @@ normalize_antimeridian_rings <- function(x,
 }
 
 #' Repair polygons for the spherical engine; the row count and order are kept.
-#' The repair can heal a feature split at +-180 back into one ring across it,
-#' and the planar retry below would read that ring as stretched round the
-#' globe, so the result is split again (split_antimeridian()).
+#' The planar step of robust_spatial_op() runs on this result, so a ring the
+#' repair leaves across +-180 is split (split_antimeridian()); the spherical
+#' retry takes the split form as well.
 repair_polygons <- function(polys) {
   out <- tryCatch(suppressWarnings(sf::st_make_valid(polys)), error = function(e) NULL)
   if (is.null(out)) {
