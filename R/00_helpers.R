@@ -708,6 +708,11 @@ calc_aoo_km2 <- function(lon, lat, cell_km = CHECKOVER_AOO_CELL_KM) {
 
 # CRITICAL FIX: Safe intersects with multiple fallbacks
 .safe_intersects <- function(pts_sf, polys_sf) {
+  # Fallback 2 is planar, and a planar engine reads a ring crossing +-180 as
+  # stretched round the globe: Papahanaumokuakea over Texas to Florida in the
+  # published 1.0 (Lucian, 2026-11). Split such rings first; s2 accepts the
+  # split form, so every attempt below sees it (00_spatial_sanitize.R).
+  if (exists("split_antimeridian", mode = "function")) polys_sf <- split_antimeridian(polys_sf)
   out <- try(sf::st_intersects(pts_sf, polys_sf, sparse = TRUE), silent = TRUE)
   if (!inherits(out, "try-error")) return(out)
   

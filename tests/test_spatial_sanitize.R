@@ -250,6 +250,72 @@ check("drop_corrupt_bbox = FALSE preserves all input features",
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# 8. A protected area split at +-180, on every engine
+# ──────────────────────────────────────────────────────────────────────────
+# WDPA stores Papahanaumokuakea split at the antimeridian. Steps 1 and 4 run
+# st_make_valid() on the spherical engine, which healed the two parts into one
+# ring across +-180. Section 4 only probed on s2, where that ring is right; the
+# planar fallback of the WDPA intersection read it as stretched round the
+# globe and put 6,035 records of 131 taxa, Texas to Florida, inside the
+# monument in the published 1.0. Every engine must now agree.
+cat("\n[8] Split protected area: s2, planar lon/lat, planar EPSG:6933\n")
+
+mk_split_pa <- function() {
+  east <- sf::st_polygon(list(rbind(c(175, 20), c(180, 20), c(180, 30), c(175, 30), c(175, 20))))
+  west <- sf::st_polygon(list(rbind(c(-180, 20), c(-160, 20), c(-160, 30), c(-180, 30), c(-180, 20))))
+  sf::st_multipolygon(list(east, west))
+}
+pa_layer <- sf::st_sf(NAME = c("Monument", "Good_PA"),
+                      geometry = sf::st_sfc(mk_split_pa(), mk_europe_poly(), crs = 4326))
+probes <- sf::st_sf(id = c("texas", "florida", "east", "west"),
+                    geometry = sf::st_sfc(sf::st_point(c(-97, 29)), sf::st_point(c(-82, 28)),
+                                          sf::st_point(c(178, 25)), sf::st_point(c(-170, 25)), crs = 4326))
+want <- c(texas = 0L, florida = 0L, east = 1L, west = 1L)
+hits_on <- function(polys, engine) {
+  old <- sf::sf_use_s2(engine == "s2"); on.exit(sf::sf_use_s2(old), add = TRUE)
+  p <- if (engine == "6933") sf::st_transform(probes, 6933) else probes
+  g <- if (engine == "6933") sf::st_transform(polys, 6933) else polys
+  setNames(suppressMessages(lengths(sf::st_intersects(p, g[1, ]))), probes$id)
+}
+merged <- suppressWarnings(sf::st_make_valid(pa_layer))   # what steps 1 and 4 make of it
+check("the s2 repair heals the split monument into one ring across +-180 (the bug's premise)",
+      .crosses_antimeridian(sf::st_geometry(merged)[[1]]))
+for (src in c("split", "merged")) {
+  out <- sanitize_spatial_layer(if (src == "split") pa_layer else merged, layer_name = "TEST_PA")
+  check(sprintf("%s input: both protected areas kept", src), nrow(out) == 2L)
+  check(sprintf("%s input: no ring of the sanitized monument crosses +-180", src),
+        !.crosses_antimeridian(sf::st_geometry(out)[[1]]))
+  for (eng in c("s2", "planar", "6933")) {
+    h <- hits_on(out, eng)
+    check(sprintf("%s input, %s engine: monument holds its own points and not Texas or Florida", src, eng),
+          identical(h, want), paste(names(h), h, collapse = " "))
+  }
+}
+rep <- repair_polygons(pa_layer)
+check("repair_polygons() leaves no ring across +-180 for the planar retry",
+      !.crosses_antimeridian(sf::st_geometry(rep)[[1]]) && identical(hits_on(rep, "planar"), want))
+check("split_antimeridian() leaves features that do not cross untouched",
+      identical(sf::st_geometry(split_antimeridian(merged))[[2]], sf::st_geometry(merged)[[2]]))
+# Antarctica spans every longitude: no shift makes it contiguous, so it is
+# left as it was rather than broken.
+antarctica <- sf::st_polygon(list(rbind(c(-180, -60), c(-90, -65), c(0, -62), c(90, -66), c(180, -60),
+                                        c(180, -90), c(-180, -90), c(-180, -60))))
+check("a ring round the whole globe (Antarctica) is not split",
+      is.null(.split_at_antimeridian(antarctica, sf::st_crs(4326))))
+# The WDPA intersection itself, on the planar engine (as its fallback 2 runs):
+# given the healed ring, it must split it before intersecting.
+h_env <- new.env()
+ok_helpers <- tryCatch({ sys.source("R/00_helpers.R", envir = h_env); TRUE }, error = function(e) FALSE)
+if (ok_helpers) {
+  old <- sf::sf_use_s2(FALSE)
+  si <- suppressMessages(lengths(h_env$.safe_intersects(probes, merged[1, ])))
+  sf::sf_use_s2(old)
+  check(".safe_intersects() on the planar engine keeps Texas and Florida out of the monument",
+        identical(setNames(si, probes$id), want), paste(si, collapse = " "))
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Final summary
 # ──────────────────────────────────────────────────────────────────────────
 cat("\n========== RESULTS ==========\n")
