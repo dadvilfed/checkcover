@@ -181,6 +181,31 @@ ok(aud2$n_mismatched == 0, sprintf("the audit reads WoC's 'not computed' as an u
 ok(grepl("**Total references:** 0\n",
          .build_section4("X", NULL, NULL, NULL, NULL, "1.1", "v1.1", "2026-10-23"), fixed = TRUE),
    "no bibliography -> 0 references")
+# A SICI DOI holds a ";" of its own. Split on ";", the narrative listed one
+# DOI more than the bibliography, which failed 13 packages of 1.2
+# (run_20261103_6). A DOI the narrative really lacks must still fail.
+sici <- "10.1656/1528-7092(2007)6[141:icontn]2.0.co;2"
+pkg_sici <- function(name, dois) {
+  p <- file.path(out, name, "Testus_y"); dir.create(file.path(p, "narratives"), recursive = TRUE)
+  dir.create(file.path(p, "citations"))
+  writeLines(c("### 4.4 Bibliographic coverage", "", sprintf("- **Total references:** %d", length(dois)),
+               paste0("- **DOI-linked references:** ", paste(sort(c(sici, "10.1111/fwb.12345")), collapse = "; "))),
+             file.path(p, "narratives", "Testus_y_canonical.md"), useBytes = TRUE)
+  jsonlite::write_json(list(totals = list(total_references = length(dois)),
+                            references = lapply(seq_along(dois), function(i) list(id = sprintf("REF_%03d", i), doi = dois[i]))),
+                       file.path(p, "citations", "Testus_y_bibliography.json"), auto_unbox = TRUE)
+  jsonlite::write_json(list(snapshot = list(version = "1.2"),
+                            metrics = list(indigenous = list(records = 2L), non_indigenous = list(records = 0L))),
+                       file.path(p, "package_metadata.json"), auto_unbox = TRUE)
+  audit_narrative_metadata_consistency(file.path(out, name))
+}
+aud3 <- pkg_sici("pkg3", c(sici, "10.1111/fwb.12345"))
+ok(aud3$n_mismatched == 0, sprintf("the audit reads a SICI DOI in 4.4 as one DOI (%s)",
+                                   paste(unlist(aud3$mismatches), collapse = "; ")))
+aud4 <- pkg_sici("pkg4", c(sici, "10.1111/fwb.12345", "10.1002/aqc.2468"))
+ok(aud4$n_mismatched == 1 && any(grepl("DOI-linked references: narrative lists 2, bibliography 3",
+                                       unlist(aud4$mismatches), fixed = TRUE)),
+   "a DOI missing from 4.4 still fails the audit")
 
 unlink(c(out, out2), recursive = TRUE)
 cat(sprintf("\n[test_citation_retention] %d passed, %d failed\n", pass, fail))

@@ -37,6 +37,13 @@ writeLines(can$full_markdown, file.path(d,"narratives","Cambarus_veitchorum_cano
 writeLines(can$formal_narrative_text, file.path(d,"narratives","Cambarus_veitchorum_narrative.txt"), useBytes=TRUE)
 # Extinct package: a "former range" layer is allowed, but NO current basins layer.
 writeLines("{}", file.path(d,"maps","Cambarus_veitchorum_former_range.geojson"))
+# Its bibliography still ships, with DOIs, while the terminal narrative has no
+# section 4. The audit read that as "narrative lists 0" and failed 1.2 for
+# P. nigrescens and P. angustatus (run_20261103_6).
+dir.create(file.path(d,"citations"))
+jsonlite::write_json(list(totals=list(total_references=2L),
+  references=list(list(id="REF_001", doi="10.1111/fwb.12345"), list(id="REF_002", doi="10.11646/zootaxa.4567.1.1"))),
+  file.path(d,"citations","Cambarus_veitchorum_bibliography.json"), auto_unbox=TRUE)
 
 pkg <- list(species="Cambarus veitchorum", status="Extinct",
   snapshot=list(version="1.1", is_baseline=FALSE),

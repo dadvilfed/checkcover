@@ -267,13 +267,22 @@ audit_narrative_metadata_consistency <- function(version_dir) {
     if (.mismatch(meta_refs, narr_refs))
       problems <- c(problems, sprintf("Total references: narrative %s vs bibliography %s", narr_refs, meta_refs))
     refs <- bj$references %||% list()
-    if (length(refs) && all(vapply(refs, function(r) "doi" %in% names(r), logical(1)))) {
+    # An Extinct package carries the zero-active terminal narrative, which has
+    # no section 4 at all; its bibliography still ships. Read as an empty DOI
+    # list, it failed 1.2 for P. nigrescens and P. angustatus (run_20261103_6).
+    terminal <- identical(meta$status %||% "Extant", "Extinct") &&
+                !grepl("### 4.4 Bibliographic coverage", md, fixed = TRUE)
+    if (!terminal && length(refs) && all(vapply(refs, function(r) "doi" %in% names(r), logical(1)))) {
       # as.character(): a bibliography with no DOI unlists to NULL, which
       # identical() does not take for character(0) (Pontastacus cubanicus,
       # runtime-1.1 demo trial).
-      b_dois <- sort(unique(as.character(unlist(lapply(refs, function(r) r$doi)))))
+      b_dois <- as.character(unlist(lapply(refs, function(r) r$doi)))
+      b_dois <- sort(unique(b_dois[!is.na(b_dois) & nzchar(b_dois)]))
       m <- regmatches(md, regexec("\\*\\*DOI-linked references:\\*\\* ([^\n]*)", md))[[1]]
-      n_dois <- if (length(m) >= 2 && m[2] != "none") sort(unique(trimws(strsplit(m[2], ";")[[1]]))) else character(0)
+      # The narrative joins DOIs with "; ". Split on that, not on ";": a SICI
+      # DOI holds one itself (10.1656/1528-7092(2007)6[141:icontn]2.0.co;2),
+      # and 13 packages of 1.2 failed as "one DOI more than the bibliography".
+      n_dois <- if (length(m) >= 2 && m[2] != "none") sort(unique(trimws(strsplit(m[2], ";\\s+")[[1]]))) else character(0)
       if (!identical(n_dois, b_dois))
         problems <- c(problems, sprintf("DOI-linked references: narrative lists %d, bibliography %d",
                                         length(n_dois), length(b_dois)))
