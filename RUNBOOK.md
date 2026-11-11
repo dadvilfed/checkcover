@@ -188,7 +188,10 @@ and 176 MB of temporal history for three revisions, with 260 GB free.
 Rebuild only to deploy a **new** code tag. Tags are immutable: never rebuild an
 existing tag in place.
 
-The one exception was made before the live series had a lasting revision. On
+Two exceptions were made, each before any image was built from the tag.
+`runtime-1.3` moved on 2026-11-11 from `5c73c51`, whose image build failed its
+tests under the image's sf 1.1.0 / GDAL 3.8.4, to `d024f7b`. The first was
+made before the live series had a lasting revision. On
 2026-09-27, `runtime-1.0` moved from `24908e7`, with no image built in between,
 to the commit that carries this note:
 - the completed hydronym table (Supplement File S2, sha256
