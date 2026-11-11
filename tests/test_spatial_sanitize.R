@@ -296,6 +296,24 @@ check("repair_polygons() leaves no ring across +-180 for the planar retry",
       !.crosses_antimeridian(sf::st_geometry(rep)[[1]]) && identical(hits_on(rep, "planar"), want))
 check("split_antimeridian() leaves features that do not cross untouched",
       identical(sf::st_geometry(split_antimeridian(merged))[[2]], sf::st_geometry(merged)[[2]]))
+# GDAL 3.8 (the image's) wraps Russia into a GEOMETRYCOLLECTION with a line
+# along the cut; under sf 1.1.0 a union over it then returned two geometries
+# and the continents dissolve failed (runtime-1.3 build). A split feature is
+# always one MULTIPOLYGON of the polygon parts.
+gc <- sf::st_sfc(sf::st_geometrycollection(list(
+  sf::st_polygon(list(rbind(c(175, 20), c(180, 20), c(180, 30), c(175, 30), c(175, 20)))),
+  sf::st_polygon(list(rbind(c(-180, 20), c(-160, 20), c(-160, 30), c(-180, 30), c(-180, 20)))),
+  sf::st_linestring(rbind(c(180, 20), c(180, 30))))), crs = 4326)
+mp <- .as_multipolygon(gc)
+check("a wrap that returns polygons plus a line becomes one MULTIPOLYGON of the polygons",
+      inherits(mp, "MULTIPOLYGON") && length(mp) == 2L)
+check("a wrap with no polygon parts is not used",
+      is.null(.as_multipolygon(sf::st_sfc(sf::st_linestring(rbind(c(180, 20), c(180, 30))), crs = 4326))))
+for (src in c("split", "merged")) {
+  out <- sanitize_spatial_layer(if (src == "split") pa_layer else merged, layer_name = "TEST_PA")
+  check(sprintf("%s input: the sanitized layer holds polygons only", src),
+        all(as.character(sf::st_geometry_type(out)) %in% c("POLYGON", "MULTIPOLYGON")))
+}
 # Antarctica spans every longitude: no shift makes it contiguous, so it is
 # left as it was rather than broken.
 antarctica <- sf::st_polygon(list(rbind(c(-180, -60), c(-90, -65), c(0, -62), c(90, -66), c(180, -60),

@@ -304,7 +304,23 @@ sanitize_spatial_layer <- function(x,
   w <- tryCatch(suppressWarnings(sf::st_wrap_dateline(shifted, options = "WRAPDATELINE=YES")),
                 error = function(e) NULL)
   if (is.null(w) || length(w) != 1L || isTRUE(sf::st_is_empty(w))) return(NULL)
-  w[[1]]
+  .as_multipolygon(w)
+}
+
+#' The polygon parts of a one-geometry sfc as a single MULTIPOLYGON; NULL if it
+#' has none. GDAL 3.8 (the image's) wraps Russia into a GEOMETRYCOLLECTION
+#' with a line along the cut, where GDAL 3.11 gives a MULTIPOLYGON; under
+#' sf 1.1.0, st_union() then returned one geometry per dimension, and the
+#' continents dissolve failed on Europe (runtime-1.3 build, 2026-11-11).
+.as_multipolygon <- function(w) {
+  polys <- tryCatch(suppressWarnings(sf::st_collection_extract(w, "POLYGON")), error = function(e) NULL)
+  if (is.null(polys) || !length(polys)) return(NULL)
+  polys <- polys[!sf::st_is_empty(polys)]
+  if (!length(polys)) return(NULL)
+  out <- tryCatch(sf::st_cast(sf::st_combine(sf::st_cast(polys, "POLYGON")), "MULTIPOLYGON"),
+                  error = function(e) NULL)
+  if (is.null(out) || length(out) != 1L || isTRUE(sf::st_is_empty(out))) return(NULL)
+  out[[1]]
 }
 
 #' Split every feature of a lon/lat layer whose rings cross +-180. Features
